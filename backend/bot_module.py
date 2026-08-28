@@ -658,6 +658,80 @@ async def _resolve_timer_target(cfg, guild, channel, role_arg):
     return role, target_channel
 
 
+
+FREEZE_EMOJI = "<:ban:1542637913630838825>"
+
+
+def _fmt_secs(sec: int) -> str:
+    sec = max(0, int(sec))
+    h, m = divmod(sec // 60, 60)
+    if h and m:
+        return f"{h}h {m}m"
+    if h:
+        return f"{h}h"
+    return f"{m}m"
+
+
+def build_panel_embed(member_mention: str, sub: dict) -> discord.Embed:
+    frozen = bool(sub.get("frozen"))
+    embed = discord.Embed(
+        title="Access Panel",
+        description=f"{member_mention}",
+        color=discord.Color.red() if frozen else discord.Color.blue(),
+    )
+    embed.add_field(name="Time Left", value=f"`{_fmt_secs(sub.get('burn_seconds', 0))}`", inline=True)
+    embed.add_field(name="Freeze Available", value=f"`{_fmt_secs(sub.get('freeze_seconds', 0))}`", inline=True)
+    embed.add_field(name="Status", value="`FROZEN`" if frozen else "`ACTIVE`", inline=True)
+    return embed
+
+
+class FreezeView(discord.ui.View):
+    def __init__(self, frozen: bool = False):
+        super().__init__(timeout=None)
+        btn = discord.ui.Button(
+            label="Unfreeze Time" if frozen else "Freeze Time",
+            style=discord.ButtonStyle.danger if frozen else discord.ButtonStyle.primary,
+            emoji=discord.PartialEmoji.from_str(FREEZE_EMOJI),
+            custom_id="snapplus:freeze",
+        )
+        btn.callback = self._toggle
+        self.add_item(btn)
+
+    async def _toggle(self, interaction: discord.Interaction):
+        db = _state["db"]
+        if db is None:
+            await interaction.response.send_message("Database not available.", ephemeral=True)
+            return
+
+        uid = str(interaction.user.id)
+        sub = await db.subscriptions.find_one({"discord_id": uid})
+        if not sub:
+            await interaction.response.send_message(
+                "No active subscription found for your account.", ephemeral=True
+            )
+            return
+
+        frozen = bool(sub.get("frozen"))
+
+        if not frozen and int(sub.get("freeze_seconds", 0)) <= 0:
+            await interaction.response.send_message(
+                "You have no freeze time left.", ephemeral=True
+            )
+            return
+
+        new_frozen = not frozen
+        await db.subscriptions.update_one(
+            {"discord_id": uid},
+            {"$set": {"frozen": new_frozen, "last_tick": datetime.now(timezone.utc).isoformat()}},
+        )
+        sub["frozen"] = new_frozen
+
+        await interaction.response.edit_message(
+            embed=build_panel_embed(interaction.user.mention, sub),
+            view=FreezeView(new_frozen),
+        )
+
+
 async def _run_bot(token: str):
     intents = discord.Intents.default()
     intents.members = True            # lettura ruoli/membri (privileged: attivalo nel portal)
@@ -690,16 +764,24 @@ async def _run_bot(token: str):
                     }
                 )
                 
-                embed = discord.Embed(
-                    title="⏱️ Access Granted",
-                    description=f"Welcome {member.mention}! You have been granted {hours}h of access.",
-                    color=discord.Color.blue()
+                secs = hours * 3600
+                sub = {
+                    "discord_id": str(member.id),
+                    "username": member.name,
+                    "burn_seconds": secs,
+                    "freeze_seconds": secs,
+                    "frozen": False,
+                    "channel_id": str(channel.id),
+                    "last_tick": datetime.now(timezone.utc).isoformat(),
+                }
+                await _state["db"].subscriptions.update_one(
+                    {"discord_id": str(member.id)}, {"$set": sub}, upsert=True
                 )
-                embed.add_field(name="📊 Time Left", value=f"`{hours}h`", inline=True)
-                embed.add_field(name="⏸️ Freeze Available", value=f"`{hours}h`", inline=True)
-                embed.add_field(name="🔄 Status", value="`ACTIVE`", inline=True)
-                
-                await channel.send(embed=embed)
+
+                await channel.send(
+                    embed=build_panel_embed(member.mention, sub),
+                    view=FreezeView(False),
+                )
                 await interaction.response.send_message(f"✅ Access granted to {member.mention}", ephemeral=True)
             except Exception as e:
                 await interaction.response.send_message(f"❌ Error: {e}", ephemeral=True)
@@ -718,6 +800,8 @@ async def _run_bot(token: str):
                 await bot.tree.sync()
             except Exception as e:
                 log.warning(f"slash sync failed: {e}")
+            bot.add_view(FreezeView())
+            bot.add_view(FreezeView(True))
             asyncio.create_task(resume_timers())
 
         @bot.event
