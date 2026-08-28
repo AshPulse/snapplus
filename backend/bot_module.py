@@ -746,26 +746,6 @@ async def _run_bot(token: str):
                 await ctx.send("Uso: `!timer @user 24h` (opzionale: `@Ruolo`)")
             else:
                 log.warning(f"!timer error: {error}")
-
-        # ---------- /timer (funziona anche senza message_content) ----------
-        @bot.tree.command(name="timer", description="Assegna un ruolo a tempo")
-        async def timer_slash(interaction: discord.Interaction, member: discord.Member, duration: str, role: discord.Role = None):
-            if not interaction.user.guild_permissions.manage_roles:
-                await interaction.response.send_message("❌ Ti serve il permesso Manage Roles.", ephemeral=True)
-                return
-            seconds = parse_duration(duration)
-            if seconds <= 0:
-                await interaction.response.send_message("⚠️ Durata non valida. Es: `24h`, `30m`, `7d`.", ephemeral=True)
-                return
-            cfg = await get_config()
-            role, channel = await _resolve_timer_target(cfg, interaction.guild, interaction.channel, role)
-            if role is None:
-                await interaction.response.send_message("⚠️ Nessun ruolo impostato (`timer_role_id`).", ephemeral=True)
-                return
-            await interaction.response.send_message(f"✅ Timer avviato per {member.mention}", ephemeral=True)
-            try:
-                await _grant_timer_role(interaction.guild, member, role, seconds, duration, channel, interaction.user)
-            except discord.Forbidden:
                 await interaction.followup.send("❌ Permessi insufficienti per quel ruolo.", ephemeral=True)
 
         await bot.start(token)
