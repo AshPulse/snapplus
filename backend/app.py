@@ -15,6 +15,12 @@ from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 
+
+class QueueJoinInput(BaseModel):
+    user_id: str
+    username: str
+    country: str
+
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
 
@@ -335,10 +341,6 @@ def require_perm(key: str):
 
 # ---------- Models ----------
 
-class QueueJoinInput(BaseModel):
-    user_id: str
-    username: str
-    country: str  # FR, BE, BG
 
 class RegisterInput(BaseModel):
     nickname: str = Field(min_length=1, max_length=40)
