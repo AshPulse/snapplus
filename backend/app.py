@@ -259,7 +259,6 @@ async def queue_join(data: QueueJoinInput, request: Request):
     if data.country not in ["FR", "BE", "BG"]:
         raise HTTPException(400, "Invalid country")
     
-    db = _state["db"]
     
     # Controlla se già in coda
     existing = await db.queue_entries.find_one({"user_id": data.user_id, "status": "pending"})
@@ -286,14 +285,12 @@ async def queue_join(data: QueueJoinInput, request: Request):
 @limiter.limit("10/minute")
 async def queue_leave(user_id: str, country: str, request: Request):
     """Utente esce dalla coda"""
-    db = _state["db"]
     result = await db.queue_entries.delete_one({"user_id": user_id, "country": country, "status": "pending"})
     return {"ok": result.deleted_count > 0}
 
 @api_router.get("/queue/position/{user_id}")
 async def queue_position(user_id: str):
     """Posizione in coda"""
-    db = _state["db"]
     entry = await db.queue_entries.find_one({"user_id": user_id, "status": "pending"})
     if not entry:
         return {"position": None}
@@ -302,7 +299,6 @@ async def queue_position(user_id: str):
 @api_router.get("/queue/stats/{country}")
 async def queue_stats(country: str):
     """Statistiche coda"""
-    db = _state["db"]
     count = await db.queue_entries.count_documents({"country": country, "status": "pending"})
     return {"people_in_queue": count, "average_wait": f"~{max(1, count * 2)}m"}
 
