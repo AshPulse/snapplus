@@ -8,3 +8,4 @@ aiohttp==3.9.1
 slowapi==0.1.9
 discord.py==2.3.2
 requests==2.31.0
+httpx
