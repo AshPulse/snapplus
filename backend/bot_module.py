@@ -711,6 +711,10 @@ async def _run_bot(token: str):
             _state["last_error"] = None
             log.info(f"[snap-bot] online as {bot.user}")
             try:
+                for g in bot.guilds:
+                    bot.tree.copy_global_to(guild=g)
+                    await bot.tree.sync(guild=g)
+                    log.info(f"[snap-bot] synced commands to guild {g.id}")
                 await bot.tree.sync()
             except Exception as e:
                 log.warning(f"slash sync failed: {e}")
