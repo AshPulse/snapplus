@@ -675,6 +675,27 @@ def _fmt_secs(sec: int) -> str:
     return f"{m}m"
 
 
+async def refresh_panel(guild, sub: dict, member_mention: str = None):
+    """Edit the existing panel message in place. Returns True on success."""
+    chan_id = sub.get("panel_channel_id")
+    msg_id = sub.get("panel_message_id")
+    if not chan_id or not msg_id:
+        return False
+    try:
+        channel = guild.get_channel(int(chan_id))
+        if channel is None:
+            return False
+        msg = await channel.fetch_message(int(msg_id))
+        mention = member_mention or f"<@{sub.get('discord_id')}>"
+        await msg.edit(
+            embed=build_panel_embed(mention, sub),
+            view=FreezeView(bool(sub.get("frozen"))),
+        )
+        return True
+    except Exception:
+        return False
+
+
 def build_panel_embed(member_mention: str, sub: dict) -> discord.Embed:
     frozen = bool(sub.get("frozen"))
     embed = discord.Embed(
@@ -781,9 +802,16 @@ async def _run_bot(token: str):
                     {"discord_id": str(member.id)}, {"$set": sub}, upsert=True
                 )
 
-                await channel.send(
+                panel_msg = await channel.send(
                     embed=build_panel_embed(member.mention, sub),
                     view=FreezeView(False),
+                )
+                await _state["db"].subscriptions.update_one(
+                    {"discord_id": str(member.id)},
+                    {"$set": {
+                        "panel_channel_id": str(channel.id),
+                        "panel_message_id": str(panel_msg.id),
+                    }},
                 )
                 await interaction.response.send_message(f"✅ Access granted to {member.mention}", ephemeral=True)
             except Exception as e:
@@ -829,18 +857,8 @@ async def _run_bot(token: str):
                 ephemeral=True,
             )
 
-            # If the user has a live panel channel, refresh its embed.
-            try:
-                chan_id = updated.get("channel_id")
-                if chan_id:
-                    channel = interaction.guild.get_channel(int(chan_id))
-                    if channel:
-                        await channel.send(
-                            embed=build_panel_embed(member.mention, updated),
-                            view=FreezeView(bool(updated.get("frozen"))),
-                        )
-            except Exception:
-                pass
+            # Update the existing panel in place (no new message).
+            await refresh_panel(interaction.guild, updated, member.mention)
 
 
         @bot.event
