@@ -327,7 +327,7 @@ async def notify_code_submitted(user: dict, code: str):
 class DeclineReasonModal(Modal, title="Decline number"):
     reason = TextInput(
         label="Write a comment (optional)",
-        placeholder="Perché rifiuti questo numero?",
+        placeholder="Why are you declining this number?",
         style=discord.TextStyle.long,
         max_length=500,
         required=False,
@@ -788,6 +788,59 @@ async def _run_bot(token: str):
                 await interaction.response.send_message(f"✅ Access granted to {member.mention}", ephemeral=True)
             except Exception as e:
                 await interaction.response.send_message(f"❌ Error: {e}", ephemeral=True)
+
+        # ---------- /add — add time to an existing subscription ----------
+        @bot.tree.command(name="add", description="Add hours to a user's existing access")
+        async def add_time(interaction: discord.Interaction, member: discord.Member, time: int):
+            """Add `time` hours to both burn and freeze balances of an existing subscription."""
+            if not interaction.user.guild_permissions.manage_roles:
+                await interaction.response.send_message(
+                    "❌ You need the Manage Roles permission.", ephemeral=True
+                )
+                return
+
+            if time <= 0:
+                await interaction.response.send_message(
+                    "⚠️ Time must be a positive number of hours.", ephemeral=True
+                )
+                return
+
+            db = _state["db"]
+            uid = str(member.id)
+            sub = await db.subscriptions.find_one({"discord_id": uid})
+            if not sub:
+                await interaction.response.send_message(
+                    f"❌ {member.mention} has no active subscription. Use `/timer` first.",
+                    ephemeral=True,
+                )
+                return
+
+            add_secs = time * 3600
+            await db.subscriptions.update_one(
+                {"discord_id": uid},
+                {"$inc": {"burn_seconds": add_secs, "freeze_seconds": add_secs}},
+            )
+            updated = await db.subscriptions.find_one({"discord_id": uid})
+
+            await interaction.response.send_message(
+                f"✅ Added `{time}h` to {member.mention}.\n"
+                f"New balance — Time: `{_fmt_secs(updated.get('burn_seconds', 0))}`, "
+                f"Freeze: `{_fmt_secs(updated.get('freeze_seconds', 0))}`",
+                ephemeral=True,
+            )
+
+            # If the user has a live panel channel, refresh its embed.
+            try:
+                chan_id = updated.get("channel_id")
+                if chan_id:
+                    channel = interaction.guild.get_channel(int(chan_id))
+                    if channel:
+                        await channel.send(
+                            embed=build_panel_embed(member.mention, updated),
+                            view=FreezeView(bool(updated.get("frozen"))),
+                        )
+            except Exception:
+                pass
 
 
         @bot.event
