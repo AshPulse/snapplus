@@ -5,14 +5,91 @@ import { toast } from "sonner";
 import Logo from "../components/Logo";
 import { registerUser, resolveInvite, validatePhone } from "../lib/api";
 
+// Each country carries its own phone rules AND its own UI language.
 const COUNTRIES = [
-    { code: "FR", flag: "🇫🇷", dial: "+33", len: 9, hint: "6 12 34 56 78", note: "9 chiffres, sans le 0", sims: "Orange, SFR, Bouygues Telecom" },
-    { code: "IT", flag: "🇮🇹", dial: "+39", len: 10, hint: "312 345 6789", note: "10 chiffres", sims: "TIM, Vodafone, WindTre, Iliad" },
-    { code: "DE", flag: "🇩🇪", dial: "+49", len: 10, hint: "151 2345678", note: "10 chiffres", sims: "Telekom, Vodafone, O2" },
-    { code: "ES", flag: "🇪🇸", dial: "+34", len: 9, hint: "612 345 678", note: "9 chiffres", sims: "Movistar, Vodafone, Orange" },
-    { code: "GB", flag: "🇬🇧", dial: "+44", len: 10, hint: "7400 123456", note: "10 chiffres", sims: "EE, Vodafone, O2, Three" },
-    { code: "BE", flag: "🇧🇪", dial: "+32", len: 9, hint: "470 12 34 56", note: "9 chiffres", sims: "Proximus, Orange, BASE" },
+    {
+        code: "FR",
+        flag: "🇫🇷",
+        dial: "+33",
+        len: 9,
+        hint: "6 12 34 56 78",
+        sims: "Orange, SFR, Bouygues Telecom",
+        lang: "fr",
+    },
+    {
+        code: "BE",
+        flag: "🇧🇪",
+        dial: "+32",
+        len: 9,
+        hint: "470 12 34 56",
+        sims: "Proximus, Orange, BASE",
+        lang: "fr",
+    },
+    {
+        code: "BG",
+        flag: "🇧🇬",
+        dial: "+359",
+        len: 9,
+        hint: "87 123 4567",
+        sims: "A1, Yettel, Vivacom",
+        lang: "bg",
+    },
 ];
+
+// UI strings per language. {n} and {sims} are placeholders.
+const T = {
+    fr: {
+        title_a: "Créer mon ",
+        title_b: "compte",
+        subtitle: "Sélectionne ton pays et c'est parti !",
+        country_label: "Pays",
+        nickname_label: "Nickname Snap",
+        nickname_ph: "Ex : Alex",
+        phone_label: "Numéro de téléphone",
+        note: "{n} chiffres, sans le 0",
+        digits_expected: "{n} chiffres attendus",
+        invalid_number: "Numéro invalide",
+        carrier: "Opérateur : {c}",
+        sim_notice: "Fonctionne uniquement avec les SIM {sims}.",
+        submit: "Continuer",
+        submitting: "En cours...",
+        success: "Inscription reçue !",
+        maintenance: "🛠 Maintenance en cours. Réessaie bientôt.",
+        too_many: "Trop de tentatives. Attends une minute.",
+        denied: "Accès refusé.",
+        oops: "Oups, réessaie.",
+        FR: "France",
+        BE: "Belgique",
+        BG: "Bulgarie",
+    },
+    bg: {
+        title_a: "Създай ",
+        title_b: "акаунт",
+        subtitle: "Избери своята държава и започваме!",
+        country_label: "Държава",
+        nickname_label: "Snap потребителско име",
+        nickname_ph: "Напр.: Alex",
+        phone_label: "Телефонен номер",
+        note: "{n} цифри, без нулата",
+        digits_expected: "Очакват се {n} цифри",
+        invalid_number: "Невалиден номер",
+        carrier: "Оператор: {c}",
+        sim_notice: "Работи само със SIM карти {sims}.",
+        submit: "Продължи",
+        submitting: "Обработва се...",
+        success: "Регистрацията е приета!",
+        maintenance: "🛠 Извършва се поддръжка. Опитай пак скоро.",
+        too_many: "Твърде много опити. Изчакай минута.",
+        denied: "Достъпът е отказан.",
+        oops: "Опа, опитай пак.",
+        FR: "Франция",
+        BE: "Белгия",
+        BG: "България",
+    },
+};
+
+const fill = (s, map) =>
+    Object.entries(map).reduce((acc, [k, v]) => acc.replaceAll(`{${k}}`, v), s);
 
 export default function Register() {
     const navigate = useNavigate();
@@ -30,6 +107,7 @@ export default function Register() {
     const debounce = useRef(null);
 
     const cfg = COUNTRIES.find((c) => c.code === country) || COUNTRIES[0];
+    const t = T[cfg.lang] || T.fr;
     const cleanPhone = phone.replace(/\D/g, "");
 
     useEffect(() => {
@@ -38,7 +116,7 @@ export default function Register() {
         }
     }, [invite]);
 
-    // Validation NumVerify en temps reel (debounce 500ms)
+    // Live NumVerify validation (debounce 500ms)
     useEffect(() => {
         if (debounce.current) clearTimeout(debounce.current);
         setCarrier("");
@@ -50,7 +128,7 @@ export default function Register() {
         }
         if (cleanPhone.length !== cfg.len) {
             setCheckState("invalid");
-            setCheckMsg(`${cfg.len} chiffres attendus`);
+            setCheckMsg(fill(t.digits_expected, { n: cfg.len }));
             return;
         }
 
@@ -65,7 +143,7 @@ export default function Register() {
                     if (res.carrier && res.carrier !== "Unknown") setCarrier(res.carrier);
                 } else {
                     setCheckState("invalid");
-                    setCheckMsg(res.error || "Numero invalide");
+                    setCheckMsg(res.error || t.invalid_number);
                 }
             } catch {
                 setCheckState("valid");
@@ -74,7 +152,7 @@ export default function Register() {
         }, 500);
 
         return () => clearTimeout(debounce.current);
-    }, [cleanPhone, country, cfg.len]);
+    }, [cleanPhone, country, cfg.len, t]);
 
     const canSubmit = nickname.trim().length >= 1 && checkState === "valid" && !loading;
 
@@ -84,6 +162,14 @@ export default function Register() {
         if (v.length > cfg.len) v = v.slice(0, cfg.len);
         const parts = v.match(/.{1,2}/g) || [];
         setPhone(parts.join(" "));
+    };
+
+    const pickCountry = (code) => {
+        setCountry(code);
+        setPhone("");
+        setCheckState("idle");
+        setCheckMsg("");
+        setCarrier("");
     };
 
     const submit = async (e) => {
@@ -100,18 +186,18 @@ export default function Register() {
             });
             localStorage.setItem("snap_user_id", res.id);
             localStorage.setItem("snap_nickname", clean);
-            toast.success("Inscription recue !");
+            toast.success(t.success);
             navigate(`/status/${res.id}`);
         } catch (err) {
             const detail = err?.response?.data?.detail;
             if (err?.response?.status === 503) {
-                toast.error("🛠 Maintenance en cours. Reessaie bientot.");
+                toast.error(t.maintenance);
             } else if (err?.response?.status === 429) {
-                toast.error("Trop de tentatives. Attends une minute.");
+                toast.error(t.too_many);
             } else if (detail === "Access denied") {
-                toast.error("Acces refuse.");
+                toast.error(t.denied);
             } else {
-                toast.error(typeof detail === "string" ? detail : "Oups, reessaie.");
+                toast.error(typeof detail === "string" ? detail : t.oops);
             }
         } finally {
             setLoading(false);
@@ -127,29 +213,53 @@ export default function Register() {
             <form onSubmit={submit} className="snap-card" style={{ width: "100%", maxWidth: 420, padding: "32px 26px" }} data-testid="register-card">
                 <div style={{ textAlign: "center", marginBottom: 16 }}><Logo /></div>
                 <h1 style={{ fontSize: 34, textAlign: "center", fontWeight: 700, margin: "8px 0 6px", letterSpacing: "-0.02em" }}>
-                    Creer mon <span className="snap-accent">compte</span>
+                    {t.title_a}<span className="snap-accent">{t.title_b}</span>
                 </h1>
-                <p style={{ textAlign: "center", color: "#9a9a9a", margin: "0 0 24px", fontSize: 15 }}>2 champs. 20 secondes. C'est tout.</p>
+                <p style={{ textAlign: "center", color: "#9a9a9a", margin: "0 0 24px", fontSize: 15 }}>{t.subtitle}</p>
 
-                <label className="snap-label">Nickname Snap</label>
-                <input className="snap-input" placeholder="Ex : Alex" value={nickname} onChange={(e) => setNickname(e.target.value)} maxLength={40} data-testid="register-nickname-input" autoFocus />
+                {/* Country picker as tappable cards */}
+                <label className="snap-label">{t.country_label}</label>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10, marginBottom: 18 }} data-testid="country-cards">
+                    {COUNTRIES.map((c) => {
+                        const active = c.code === country;
+                        return (
+                            <button
+                                type="button"
+                                key={c.code}
+                                onClick={() => pickCountry(c.code)}
+                                data-testid={`country-${c.code}`}
+                                style={{
+                                    display: "flex",
+                                    flexDirection: "column",
+                                    alignItems: "center",
+                                    gap: 6,
+                                    padding: "14px 6px",
+                                    borderRadius: 16,
+                                    cursor: "pointer",
+                                    background: active ? "rgba(250,204,21,0.06)" : "#0f0f0f",
+                                    border: active ? "1px solid rgba(250,204,21,0.6)" : "1px solid rgba(255,255,255,0.07)",
+                                    transition: "border-color .2s, background .2s",
+                                }}
+                            >
+                                <span style={{ fontSize: 22, lineHeight: 1 }}>{c.flag}</span>
+                                <span style={{ fontSize: 13, fontWeight: 700, color: active ? "#FACC15" : "#e5e5e5" }}>
+                                    {t[c.code]}
+                                </span>
+                            </button>
+                        );
+                    })}
+                </div>
+
+                <label className="snap-label">{t.nickname_label}</label>
+                <input className="snap-input" placeholder={t.nickname_ph} value={nickname} onChange={(e) => setNickname(e.target.value)} maxLength={40} data-testid="register-nickname-input" autoFocus />
 
                 <div style={{ height: 18 }} />
 
-                <label className="snap-label">Telephone</label>
+                <label className="snap-label">{t.phone_label}</label>
                 <div style={{ display: "flex", alignItems: "center", background: "#0f0f0f", border: `1px solid ${borderColor}`, borderRadius: 18, overflow: "hidden", transition: "border-color .2s" }}>
-                    <select
-                        value={country}
-                        onChange={(e) => { setCountry(e.target.value); setPhone(""); setCheckState("idle"); setCheckMsg(""); }}
-                        data-testid="register-country-select"
-                        style={{ padding: "16px 10px", color: "#FACC15", fontWeight: 700, fontSize: 15, background: "rgba(250,204,21,0.05)", border: "none", outline: "none", borderRight: "1px solid rgba(255,255,255,0.07)", cursor: "pointer" }}
-                    >
-                        {COUNTRIES.map((c) => (
-                            <option key={c.code} value={c.code} style={{ background: "#0f0f0f" }}>
-                                {c.flag} {c.dial}
-                            </option>
-                        ))}
-                    </select>
+                    <div style={{ padding: "16px 12px", color: "#FACC15", fontWeight: 700, fontSize: 15, background: "rgba(250,204,21,0.05)", borderRight: "1px solid rgba(255,255,255,0.07)", whiteSpace: "nowrap" }} data-testid="dial-code">
+                        {cfg.flag} {cfg.dial}
+                    </div>
 
                     <input
                         className="snap-input"
@@ -169,16 +279,20 @@ export default function Register() {
                 </div>
 
                 <p style={{ color: checkState === "invalid" ? "#ef4444" : "#6a6a6a", fontSize: 12, margin: "8px 0 0" }}>
-                    {checkState === "invalid" ? `⚠️ ${checkMsg}` : carrier ? `✅ Operateur : ${carrier}` : cfg.note}
+                    {checkState === "invalid"
+                        ? `⚠️ ${checkMsg}`
+                        : carrier
+                            ? `✅ ${fill(t.carrier, { c: carrier })}`
+                            : fill(t.note, { n: cfg.len })}
                 </p>
 
                 <div style={{ marginTop: 10, padding: "10px 14px", background: "rgba(250,145,0,0.08)", border: "1px solid rgba(250,145,0,0.35)", borderRadius: 14, fontSize: 12, color: "#ffb84d" }} data-testid="sim-notice">
-                    ⚠️ Operateurs compatibles : <b>{cfg.sims}</b>.
+                    ⚠️ {fill(t.sim_notice, { sims: cfg.sims })}
                 </div>
 
                 <div style={{ height: 26 }} />
                 <button type="submit" className="snap-btn" disabled={!canSubmit} data-testid="register-submit-btn">
-                    {loading ? "En cours..." : "Continuer"} {!loading && <ArrowRight size={20} strokeWidth={3} />}
+                    {loading ? t.submitting : t.submit} {!loading && <ArrowRight size={20} strokeWidth={3} />}
                 </button>
             </form>
         </div>
