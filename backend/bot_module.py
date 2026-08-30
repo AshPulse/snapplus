@@ -505,12 +505,12 @@ class DeclineReasonModal(Modal, title="Decline number"):
         })
         await log_action(f"USER_DECLINED, <@{interaction.user.id}>, ({comment or 'no comment'}) — `{self.nickname}`")
         try:
-            embed = discord.Embed(
-                title="❌ Declined",
-                description=f"**User:** `{self.nickname}`\n**Phone:** `{self.phone}`" + (f"\n**Comment:** {comment}" if comment else ""),
-                color=0xef4444,
+            extra = f"Comment: {comment}" if comment else ""
+            await interaction.response.edit_message(
+                view=OTPResultView(
+                    f"{BAN_EMOJI} Declined", self.nickname, self.phone, 0xEF4444, extra
+                )
             )
-            await interaction.response.edit_message(embed=embed, view=None)
         except Exception:
             try:
                 await interaction.response.send_message("❌ Declined.", ephemeral=True)
@@ -1290,10 +1290,10 @@ class TurnArrivedView(discord.ui.LayoutView):
             head += f" \u2014 {name}"
         body = (
             f"{head}\n"
-            f"A number just arrived **in this panel** \u2014 claim it above and "
+            f"A number just arrived **in this panel** \u2014 claim it below and "
             f"go through the steps.\n\n"
             f"You've been removed from the queue. Press **Join Queue again** to "
-            f"rejoin \u2014 this also clears the number message above."
+            f"rejoin \u2014 this also clears the number message below."
         )
         container = discord.ui.Container(accent_colour=0x22C55E)
         container.add_item(discord.ui.TextDisplay(body))
