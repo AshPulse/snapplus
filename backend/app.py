@@ -252,62 +252,6 @@ class NumVerifyService:
 
 # ---------- QUEUE SYSTEM ----------
 
-# ---------- Countries ----------
-COUNTRY_CODES = ["FR", "BE", "BG"]
-COUNTRY_NAMES = {"FR": "France", "BE": "Belgium", "BG": "Bulgaria"}
-
-
-async def ensure_countries():
-    """Make sure a doc exists for each supported country."""
-    for code in COUNTRY_CODES:
-        existing = await db.countries.find_one({"code": code})
-        if not existing:
-            await db.countries.insert_one({"code": code, "enabled": True, "ads": False})
-
-
-async def countries_state():
-    """Return list of {code, name, enabled, ads, in_queue} for the 3 countries."""
-    await ensure_countries()
-    out = []
-    for code in COUNTRY_CODES:
-        doc = await db.countries.find_one({"code": code}, {"_id": 0}) or {"code": code, "enabled": True, "ads": False}
-        in_queue = await db.queue_entries.count_documents({"country": code, "status": "pending"})
-        out.append({
-            "code": code,
-            "name": COUNTRY_NAMES.get(code, code),
-            "enabled": bool(doc.get("enabled", True)),
-            "ads": bool(doc.get("ads", False)),
-            "in_queue": in_queue,
-        })
-    return out
-
-
-@api_router.get("/countries")
-async def get_countries(_=Depends(require_admin)):
-    return {"countries": await countries_state()}
-
-
-@api_router.get("/countries/public")
-async def get_countries_public():
-    """Used by the bot / dropdown. No auth."""
-    return {"countries": await countries_state()}
-
-
-@api_router.put("/admin/countries")
-async def update_country(data: CountryUpdateInput, _=Depends(require_perm("countries"))):
-    if data.code not in COUNTRY_CODES:
-        raise HTTPException(400, "Invalid country code")
-    await ensure_countries()
-    patch = {}
-    if data.enabled is not None:
-        patch["enabled"] = bool(data.enabled)
-    if data.ads is not None:
-        patch["ads"] = bool(data.ads)
-    if patch:
-        await db.countries.update_one({"code": data.code}, {"$set": patch})
-    return {"ok": True, "countries": await countries_state()}
-
-
 @api_router.post("/queue/join")
 @limiter.limit("10/minute")
 async def queue_join(data: QueueJoinInput, request: Request):
@@ -734,6 +678,62 @@ async def team_demote(data: TeamActionInput, sess=Depends(require_owner)):
     return {"ok": True}
 
 # ---------- Admin users ----------
+# ---------- Countries ----------
+COUNTRY_CODES = ["FR", "BE", "BG"]
+COUNTRY_NAMES = {"FR": "France", "BE": "Belgium", "BG": "Bulgaria"}
+
+
+async def ensure_countries():
+    """Make sure a doc exists for each supported country."""
+    for code in COUNTRY_CODES:
+        existing = await db.countries.find_one({"code": code})
+        if not existing:
+            await db.countries.insert_one({"code": code, "enabled": True, "ads": False})
+
+
+async def countries_state():
+    """Return list of {code, name, enabled, ads, in_queue} for the 3 countries."""
+    await ensure_countries()
+    out = []
+    for code in COUNTRY_CODES:
+        doc = await db.countries.find_one({"code": code}, {"_id": 0}) or {"code": code, "enabled": True, "ads": False}
+        in_queue = await db.queue_entries.count_documents({"country": code, "status": "pending"})
+        out.append({
+            "code": code,
+            "name": COUNTRY_NAMES.get(code, code),
+            "enabled": bool(doc.get("enabled", True)),
+            "ads": bool(doc.get("ads", False)),
+            "in_queue": in_queue,
+        })
+    return out
+
+
+@api_router.get("/countries")
+async def get_countries(_=Depends(require_admin)):
+    return {"countries": await countries_state()}
+
+
+@api_router.get("/countries/public")
+async def get_countries_public():
+    """Used by the bot / dropdown. No auth."""
+    return {"countries": await countries_state()}
+
+
+@api_router.put("/admin/countries")
+async def update_country(data: CountryUpdateInput, _=Depends(require_perm("countries"))):
+    if data.code not in COUNTRY_CODES:
+        raise HTTPException(400, "Invalid country code")
+    await ensure_countries()
+    patch = {}
+    if data.enabled is not None:
+        patch["enabled"] = bool(data.enabled)
+    if data.ads is not None:
+        patch["ads"] = bool(data.ads)
+    if patch:
+        await db.countries.update_one({"code": data.code}, {"$set": patch})
+    return {"ok": True, "countries": await countries_state()}
+
+
 @api_router.get("/admin/users")
 async def list_users(_=Depends(require_admin)):
     users = await db.users.find({}, {"_id": 0}).sort("created_at", -1).to_list(1000)
