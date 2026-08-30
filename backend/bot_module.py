@@ -360,7 +360,11 @@ async def _route_number_to_queue(user: dict, cfg: dict) -> bool:
 
     # Post the same New-number panel in their private channel.
     try:
-        await ch.send(view=NumberView(user, cfg))
+        num_msg = await ch.send(view=NumberView(user, cfg))
+        await db.subscriptions.update_one(
+            {"discord_id": uid},
+            {"$set": {"routed_number_message_id": str(num_msg.id)}},
+        )
     except Exception as e:
         log.warning(f"route_number send failed: {e}")
         return False
@@ -1261,6 +1265,17 @@ class BackToQueueButton(discord.ui.Button):
         uid = str(interaction.user.id)
         sub = await db.subscriptions.find_one({"discord_id": uid})
         frozen = bool(sub.get("frozen")) if sub else False
+        try:
+            nmid = sub.get("routed_number_message_id") if sub else None
+            if nmid:
+                nmsg = await interaction.channel.fetch_message(int(nmid))
+                await nmsg.delete()
+                await db.subscriptions.update_one(
+                    {"discord_id": uid},
+                    {"$unset": {"routed_number_message_id": ""}},
+                )
+        except Exception as e:
+            log.warning(f"clear number message failed: {e}")
         await interaction.response.edit_message(view=JoinQueueView(frozen))
 
 
@@ -1277,8 +1292,8 @@ class TurnArrivedView(discord.ui.LayoutView):
             f"{head}\n"
             f"A number just arrived **in this panel** \u2014 claim it above and "
             f"go through the steps.\n\n"
-            f"You've been removed from the queue. Press **Join Queue again** when "
-            f"you want another number."
+            f"You've been removed from the queue. Press **Join Queue again** to "
+            f"rejoin \u2014 this also clears the number message above."
         )
         container = discord.ui.Container(accent_colour=0x22C55E)
         container.add_item(discord.ui.TextDisplay(body))
@@ -1324,6 +1339,14 @@ class FreezeButton(discord.ui.Button):
             return
 
         frozen = bool(sub.get("frozen"))
+        if not frozen:
+            in_queue = await db.queue_entries.find_one({"user_id": uid, "status": "pending"})
+            if in_queue:
+                await interaction.response.send_message(
+                    "You must leave the queue before you can freeze your timer.",
+                    ephemeral=True,
+                )
+                return
         if not frozen and int(sub.get("freeze_seconds", 0)) <= 0:
             await interaction.response.send_message(
                 "You have no freeze time left.", ephemeral=True
