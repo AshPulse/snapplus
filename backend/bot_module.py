@@ -748,6 +748,28 @@ async def _resolve_timer_target(cfg, guild, channel, role_arg):
 
 
 FREEZE_EMOJI = "<:ban:1542637913630838825>"
+
+STAFF_ROLE_ID = 1534898093995327568   # only this role can use /timer and /add
+BUYER_ROLE_ID = 1538144743505268748   # auto-assigned to the target of /timer and /add
+
+
+def _is_staff(member) -> bool:
+    try:
+        return any(r.id == STAFF_ROLE_ID for r in getattr(member, "roles", []) or [])
+    except Exception:
+        return False
+
+
+async def _ensure_buyer_role(guild, member):
+    """Give the buyer role to the target if they don't have it. Best-effort."""
+    try:
+        if any(r.id == BUYER_ROLE_ID for r in getattr(member, "roles", []) or []):
+            return
+        role = guild.get_role(BUYER_ROLE_ID)
+        if role is not None:
+            await member.add_roles(role, reason="Snap+ access granted")
+    except Exception as e:
+        log.warning(f"ensure_buyer_role failed: {e}")
 SEARCH_EMOJI = "<:search:1542638128463089826>"
 WORLD_EMOJI = "<:world:1542638077133193296>"
 ALERT_EMOJI = "<a:Alert:1537938372822040716>"
@@ -1225,6 +1247,11 @@ async def _run_bot(token: str):
         async def timer(interaction: discord.Interaction, member: discord.Member, hours: int):
             """Assegna accesso a tempo a un utente"""
             guild = interaction.guild
+            if not _is_staff(interaction.user):
+                await interaction.response.send_message(
+                    "❌ You don't have permission to use this command.", ephemeral=True
+                )
+                return
 
             # A1: one panel per user. Refuse if a subscription already exists.
             existing = await _state["db"].subscriptions.find_one({"discord_id": str(member.id)})
@@ -1280,6 +1307,7 @@ async def _run_bot(token: str):
                         "queue_panel_message_id": str(queue_msg.id),
                     }},
                 )
+                await _ensure_buyer_role(guild, member)
                 await interaction.response.send_message(f"✅ Access granted to {member.mention}", ephemeral=True)
             except Exception as e:
                 await interaction.response.send_message(f"❌ Error: {e}", ephemeral=True)
@@ -1288,9 +1316,9 @@ async def _run_bot(token: str):
         @bot.tree.command(name="add", description="Add hours to a user's existing access")
         async def add_time(interaction: discord.Interaction, member: discord.Member, time: int):
             """Add `time` hours to both burn and freeze balances of an existing subscription."""
-            if not interaction.user.guild_permissions.manage_roles:
+            if not _is_staff(interaction.user):
                 await interaction.response.send_message(
-                    "❌ You need the Manage Roles permission.", ephemeral=True
+                    "❌ You don't have permission to use this command.", ephemeral=True
                 )
                 return
 
@@ -1317,6 +1345,7 @@ async def _run_bot(token: str):
             )
             updated = await db.subscriptions.find_one({"discord_id": uid})
 
+            await _ensure_buyer_role(interaction.guild, member)
             await interaction.response.send_message(
                 f"✅ Added `{time}h` to {member.mention}.\n"
                 f"New balance — Time: `{_fmt_secs(updated.get('burn_seconds', 0))}`, "
