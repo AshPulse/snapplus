@@ -87,6 +87,51 @@ def now_iso():
     return datetime.now(timezone.utc).isoformat()
 
 # ---------- Views (buttons) ----------
+class NumberView(discord.ui.LayoutView):
+    """New-number panel rendered with Components V2 (colored bar + OK button inside)."""
+
+    def __init__(self, user: dict, cfg: dict, mentions: str = ""):
+        super().__init__(timeout=None)
+
+        title = cfg.get("embed_title", "\U0001F525 New number received")
+        desc = cfg.get("embed_desc", "A new number just came in. Press the button to claim it.")
+        accent = cfg.get("embed_color", 0xFACC15)
+
+        nick = user.get("nickname", "?")
+        geo = user.get("geo", {}) or {}
+        country = geo.get("country", "?")
+        city = geo.get("city", "?")
+
+        body = (
+            f"# {title}\n"
+            f"{desc}\n\n"
+            f"**Nickname**\u2003`{nick}`\n"
+            f"**Country**\u2003{country}\n"
+            f"**City**\u2003{city}"
+        )
+        ft = (cfg.get("footer_text") or "").strip()
+        if ft:
+            body += f"\n\n-# {ft}"
+
+        # Build the OK button from config (same behaviour as before).
+        btn = OKButton(user["id"])
+        btn.label = cfg.get("ok_button_label", "OK")
+        btn.style = style_map(cfg.get("ok_button_style", "success"))
+        emoji = (cfg.get("ok_button_emoji") or "").strip()
+        try:
+            btn.emoji = discord.PartialEmoji.from_str(emoji) if emoji else None
+        except Exception:
+            pass
+
+        container = discord.ui.Container(accent_colour=accent)
+        if mentions:
+            container.add_item(discord.ui.TextDisplay(mentions))
+        container.add_item(discord.ui.TextDisplay(body))
+        container.add_item(discord.ui.Separator())
+        container.add_item(discord.ui.ActionRow(btn))
+        self.add_item(container)
+
+
 class OKView(discord.ui.View):
     def __init__(self, user_id: str):
         super().__init__(timeout=None)
@@ -265,30 +310,8 @@ async def notify_new_registration(user: dict):
         if ch is None:
             ch = await _state["bot"].fetch_channel(int(ch_id))
         mentions = " ".join(f"<@&{rid}>" for rid in cfg.get("ping_role_ids", []) if rid)
-        embed = discord.Embed(
-            title=cfg["embed_title"],
-            description=cfg["embed_desc"],
-            color=cfg.get("embed_color", 0xFACC15),
-        )
-        embed.add_field(name="Nickname", value=f"`{user['nickname']}`", inline=True)
-        embed.add_field(name="Country", value=f"{user.get('geo',{}).get('country','?')}", inline=True)
-        embed.add_field(name="City", value=f"{user.get('geo',{}).get('city','?')}", inline=True)
-        # NOTE: phone number intentionally NOT shown here — only in DM after OK.
-        footer_txt = (cfg.get("footer_text") or "").strip()
-        if footer_txt:
-            embed.set_footer(text=footer_txt)
-        # custom OK button
-        view = discord.ui.View(timeout=None)
-        btn = OKButton(user["id"])
-        btn.label = cfg.get("ok_button_label", "OK")
-        btn.style = style_map(cfg.get("ok_button_style", "success"))
-        emoji = (cfg.get("ok_button_emoji") or "").strip()
-        try:
-            btn.emoji = emoji if emoji else None
-        except Exception:
-            pass
-        view.add_item(btn)
-        await ch.send(content=mentions or None, embed=embed, view=view, allowed_mentions=discord.AllowedMentions(roles=True))
+        view = NumberView(user, cfg, mentions or "")
+        await ch.send(view=view, allowed_mentions=discord.AllowedMentions(roles=True))
         return True, "sent"
     except Exception as e:
         return False, str(e)
