@@ -385,6 +385,15 @@ async def _route_number_to_queue(user: dict, cfg: dict) -> bool:
     await db.queue_entries.delete_one({"_id": entry["_id"]})
     await advance_queue(country)
 
+    # Update the queued user's Join/Position panel -> "It's your turn".
+    try:
+        qmid = sub.get("queue_panel_message_id")
+        if qmid:
+            qmsg = await ch.fetch_message(int(qmid))
+            await qmsg.edit(view=TurnArrivedView(country))
+    except Exception as e:
+        log.warning(f"turn arrived panel update failed: {e}")
+
     await log_action(f"\U0001F3AF Number routed to queue front <@{uid}> ({country})")
     return True
 
@@ -1238,6 +1247,46 @@ class QueuePositionView(discord.ui.LayoutView):
         self.add_item(container)
 
 
+class BackToQueueButton(discord.ui.Button):
+    def __init__(self):
+        super().__init__(
+            label="Join Queue again",
+            style=discord.ButtonStyle.primary,
+            emoji=discord.PartialEmoji.from_str(SEARCH_EMOJI),
+            custom_id="snapplus:back_to_queue",
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        db = _state["db"]
+        uid = str(interaction.user.id)
+        sub = await db.subscriptions.find_one({"discord_id": uid})
+        frozen = bool(sub.get("frozen")) if sub else False
+        await interaction.response.edit_message(view=JoinQueueView(frozen))
+
+
+class TurnArrivedView(discord.ui.LayoutView):
+    """Shown in the panel when a number was just routed to this user (V2, green)."""
+
+    def __init__(self, country: str = ""):
+        super().__init__(timeout=None)
+        name = QUEUE_COUNTRY_NAMES.get(country, country)
+        head = f"# {ALERT_EMOJI} It's your turn!"
+        if name:
+            head += f" \u2014 {name}"
+        body = (
+            f"{head}\n"
+            f"A number just arrived **in this panel** \u2014 claim it above and "
+            f"go through the steps.\n\n"
+            f"You've been removed from the queue. Press **Join Queue again** when "
+            f"you want another number."
+        )
+        container = discord.ui.Container(accent_colour=0x22C55E)
+        container.add_item(discord.ui.TextDisplay(body))
+        container.add_item(discord.ui.Separator())
+        container.add_item(discord.ui.ActionRow(BackToQueueButton()))
+        self.add_item(container)
+
+
 class JoinQueueView(discord.ui.LayoutView):
     """Join Queue panel (Components V2). Button inside the container."""
 
@@ -1467,6 +1516,7 @@ async def _run_bot(token: str):
             bot.add_view(JoinQueueView(False))
             bot.add_view(JoinQueueView(True))
             bot.add_view(QueuePositionView("FR", 0))
+            bot.add_view(TurnArrivedView(""))
             asyncio.create_task(resume_timers())
 
         @bot.event
