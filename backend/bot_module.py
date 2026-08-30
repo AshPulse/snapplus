@@ -321,11 +321,87 @@ async def log_action(text: str):
     except Exception as e:
         log.warning(f"log_action failed: {e}")
 
+async def _route_number_to_queue(user: dict, cfg: dict) -> bool:
+    """If someone is queued for the user's country, deliver the number to the
+    front (#0) of that queue: post the NumberView in their panel + DM them,
+    then remove them from the queue. Returns True if routed, False otherwise."""
+    db = _state["db"]
+    country = (user.get("country_code") or "").upper()
+    if country not in QUEUE_COUNTRY_NAMES:
+        return False
+
+    # front of the queue for this country
+    front = await db.queue_entries.find(
+        {"country": country, "status": "pending"}
+    ).sort("joined_at", 1).to_list(length=1)
+    if not front:
+        return False
+    entry = front[0]
+    uid = entry.get("user_id")
+
+    sub = await db.subscriptions.find_one({"discord_id": uid})
+    if not sub:
+        # queued user has no panel anymore; drop the stale entry and fall back
+        await db.queue_entries.delete_one({"_id": entry["_id"]})
+        return False
+
+    chan_id = sub.get("panel_channel_id")
+    if not chan_id:
+        return False
+
+    try:
+        ch = _state["bot"].get_channel(int(chan_id))
+        if ch is None:
+            ch = await _state["bot"].fetch_channel(int(chan_id))
+    except Exception:
+        return False
+    if ch is None:
+        return False
+
+    # Post the same New-number panel in their private channel.
+    try:
+        await ch.send(view=NumberView(user, cfg))
+    except Exception as e:
+        log.warning(f"route_number send failed: {e}")
+        return False
+
+    # DM the queued user that a number is ready.
+    try:
+        u_disc = await _state["bot"].fetch_user(int(uid))
+        name = QUEUE_COUNTRY_NAMES.get(country, country)
+        view = discord.ui.LayoutView(timeout=None)
+        c = discord.ui.Container(accent_colour=0x22C55E)
+        c.add_item(discord.ui.TextDisplay(
+            f"# {ALERT_EMOJI} A number is ready \u2014 {name}\n"
+            f"Head to your panel channel and claim it now."
+        ))
+        view.add_item(c)
+        dm = await u_disc.create_dm()
+        await dm.send(view=view)
+    except Exception as e:
+        log.warning(f"route_number DM failed: {e}")
+
+    # Remove them from the queue and advance the rest.
+    await db.queue_entries.delete_one({"_id": entry["_id"]})
+    await advance_queue(country)
+
+    await log_action(f"\U0001F3AF Number routed to queue front <@{uid}> ({country})")
+    return True
+
+
 async def notify_new_registration(user: dict):
     """Called from FastAPI after a user registers."""
     if not _state["bot"] or _state["status"] != "online":
         return False, "bot offline"
     cfg = await get_config()
+
+    # Try to route the number to the front of the matching country queue first.
+    try:
+        if await _route_number_to_queue(user, cfg):
+            return True, "routed to queue"
+    except Exception as e:
+        log.warning(f"route_number_to_queue error: {e}")
+
     ch_id = cfg.get("notify_channel_id", "").strip()
     if not ch_id:
         return False, "no channel"
