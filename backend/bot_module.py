@@ -777,6 +777,18 @@ async def _run_bot(token: str):
         async def timer(interaction: discord.Interaction, member: discord.Member, hours: int):
             """Assegna accesso a tempo a un utente"""
             guild = interaction.guild
+
+            # A1: one panel per user. Refuse if a subscription already exists.
+            existing = await _state["db"].subscriptions.find_one({"discord_id": str(member.id)})
+            if existing:
+                chan_id = existing.get("panel_channel_id")
+                where = f" (<#{chan_id}>)" if chan_id else ""
+                await interaction.response.send_message(
+                    f"\u26A0\uFE0F {member.mention} already has an active panel{where}. "
+                    f"Use `/add` to give them more time.",
+                    ephemeral=True,
+                )
+                return
             category_id = 1542631796578066624  # Your Panel
             category = guild.get_channel(category_id)
             
@@ -865,6 +877,22 @@ async def _run_bot(token: str):
             # Update the existing panel in place (no new message).
             await refresh_panel(interaction.guild, updated, member.mention)
 
+
+        @bot.event
+        async def on_guild_channel_delete(channel):
+            """B: if a user's panel channel is deleted, wipe their subscription."""
+            try:
+                db = _state["db"]
+                if db is None:
+                    return
+                sub = await db.subscriptions.find_one({"panel_channel_id": str(channel.id)})
+                if sub:
+                    await db.subscriptions.delete_one({"_id": sub["_id"]})
+                    await log_action(
+                        f"\U0001F5D1\uFE0F Panel channel deleted \u2014 subscription wiped for <@{sub.get('discord_id')}>"
+                    )
+            except Exception as e:
+                log.warning(f"on_guild_channel_delete error: {e}")
 
         @bot.event
         async def on_ready():
