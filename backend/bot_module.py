@@ -814,6 +814,126 @@ def _join_queue_body(frozen: bool = False) -> str:
     )
 
 
+QUEUE_COUNTRY_NAMES = {"FR": "France", "BE": "Belgium", "BG": "Bulgaria"}
+QUEUE_COUNTRY_CODES = ["FR", "BE", "BG"]
+
+
+async def _country_states():
+    """Read countries + live queue counts from DB."""
+    db = _state["db"]
+    out = []
+    for code in QUEUE_COUNTRY_CODES:
+        doc = await db.countries.find_one({"code": code}) or {}
+        count = await db.queue_entries.count_documents({"country": code, "status": "pending"})
+        out.append({
+            "code": code,
+            "name": QUEUE_COUNTRY_NAMES.get(code, code),
+            "enabled": bool(doc.get("enabled", True)),
+            "ads": bool(doc.get("ads", False)),
+            "in_queue": count,
+        })
+    return out
+
+
+async def _user_current_queue(uid: str):
+    db = _state["db"]
+    return await db.queue_entries.find_one({"user_id": uid, "status": "pending"})
+
+
+class CountrySelect(discord.ui.Select):
+    def __init__(self, states: list):
+        options = []
+        for c in states:
+            ads = "ON" if c["ads"] else "OFF"
+            if c["enabled"]:
+                desc = f"In queue: {c['in_queue']} | Ads: {ads}"
+                options.append(discord.SelectOption(
+                    label=c["name"], value=c["code"], description=desc,
+                ))
+            else:
+                options.append(discord.SelectOption(
+                    label=f"{c['name']} (disabled)", value=f"disabled:{c['code']}",
+                    description="Currently unavailable",
+                ))
+        if not options:
+            options.append(discord.SelectOption(label="No countries", value="none"))
+        super().__init__(
+            placeholder="Choose a country queue...",
+            min_values=1, max_values=1, options=options,
+            custom_id="snapplus:country_select",
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        db = _state["db"]
+        uid = str(interaction.user.id)
+        choice = self.values[0]
+
+        if choice == "none" or choice.startswith("disabled:"):
+            await interaction.response.send_message(
+                "That country is currently unavailable.", ephemeral=True
+            )
+            return
+
+        sub = await db.subscriptions.find_one({"discord_id": uid})
+        if not sub:
+            await interaction.response.send_message(
+                "No active subscription found.", ephemeral=True
+            )
+            return
+        if bool(sub.get("frozen")):
+            await interaction.response.send_message(
+                "Your time is frozen. Unfreeze it first.", ephemeral=True
+            )
+            return
+
+        # one queue per user
+        already = await _user_current_queue(uid)
+        if already:
+            name = QUEUE_COUNTRY_NAMES.get(already.get("country"), already.get("country"))
+            await interaction.response.send_message(
+                f"You're already in the **{name}** queue. Leave it first to switch.",
+                ephemeral=True,
+            )
+            return
+
+        # verify country still enabled
+        cdoc = await db.countries.find_one({"code": choice}) or {}
+        if not bool(cdoc.get("enabled", True)):
+            await interaction.response.send_message(
+                "That country was just disabled. Pick another.", ephemeral=True
+            )
+            return
+
+        count = await db.queue_entries.count_documents({"country": choice, "status": "pending"})
+        entry = {
+            "id": str(uuid.uuid4()),
+            "user_id": uid,
+            "username": interaction.user.name,
+            "country": choice,
+            "status": "pending",
+            "position": count + 1,
+            "joined_at": now_iso(),
+        }
+        await db.queue_entries.insert_one(entry)
+        name = QUEUE_COUNTRY_NAMES.get(choice, choice)
+        await interaction.response.send_message(
+            f"\u2705 You joined the **{name}** queue at position **#{count + 1}**.\n"
+            f"You'll get a DM when it's almost your turn.",
+            ephemeral=True,
+        )
+
+
+class CountrySelectView(discord.ui.View):
+    """Ephemeral country picker shown when pressing Join Queue."""
+
+    def __init__(self, states: list, frozen: bool = False):
+        super().__init__(timeout=120)
+        sel = CountrySelect(states)
+        if frozen:
+            sel.disabled = True
+        self.add_item(sel)
+
+
 class JoinQueueButton(discord.ui.Button):
     def __init__(self, frozen: bool = False):
         super().__init__(
@@ -841,9 +961,12 @@ class JoinQueueButton(discord.ui.Button):
                 "Your time is frozen. Unfreeze it first to join a queue.", ephemeral=True
             )
             return
-        # Placeholder: the country dropdown is the next piece.
+        states = await _country_states()
+        lines = [f"# {WORLD_EMOJI} Join a Country queue", "Select your country below. You can be in one queue at a time."]
         await interaction.response.send_message(
-            f"{WORLD_EMOJI} Country selection menu coming next.", ephemeral=True
+            content="\n".join(lines),
+            view=CountrySelectView(states, bool(sub.get("frozen"))),
+            ephemeral=True,
         )
 
 
