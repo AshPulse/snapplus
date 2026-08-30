@@ -916,9 +916,22 @@ class CountrySelect(discord.ui.Select):
         }
         await db.queue_entries.insert_one(entry)
         name = QUEUE_COUNTRY_NAMES.get(choice, choice)
+
+        # Update the Join Queue panel message -> Position view.
+        ahead = count  # people already in front
+        try:
+            qmid = sub.get("queue_panel_message_id")
+            cmid = sub.get("panel_channel_id")
+            if qmid and cmid:
+                ch = interaction.guild.get_channel(int(cmid))
+                if ch:
+                    qmsg = await ch.fetch_message(int(qmid))
+                    await qmsg.edit(view=QueuePositionView(choice, ahead))
+        except Exception:
+            pass
+
         await interaction.response.send_message(
-            f"\u2705 You joined the **{name}** queue at position **#{count + 1}**.\n"
-            f"You'll get a DM when it's almost your turn.",
+            f"\u2705 You joined the **{name}** queue at position **#{ahead}**.",
             ephemeral=True,
         )
 
@@ -976,6 +989,70 @@ class JoinQueueButton(discord.ui.Button):
             view=CountrySelectView(states, bool(sub.get("frozen"))),
             ephemeral=True,
         )
+
+
+async def _queue_position(uid: str):
+    """Return (country, ahead) where ahead = people in front (0 = your turn). None if not queued."""
+    db = _state["db"]
+    entry = await db.queue_entries.find_one({"user_id": uid, "status": "pending"})
+    if not entry:
+        return None
+    country = entry.get("country")
+    ahead = await db.queue_entries.count_documents({
+        "country": country,
+        "status": "pending",
+        "joined_at": {"$lt": entry.get("joined_at", "")},
+    })
+    return country, ahead
+
+
+def _position_body(country: str, ahead: int) -> str:
+    name = QUEUE_COUNTRY_NAMES.get(country, country)
+    if ahead <= 0:
+        headline = f"# {WORLD_EMOJI} You're up!"
+        pos = "**Your position:** `#0` \u2014 it's your turn"
+    else:
+        headline = f"# {WORLD_EMOJI} In queue \u2014 {name}"
+        pos = f"**Your position:** `#{ahead}`"
+    return (
+        f"{headline}\n"
+        f"{pos}\n\n"
+        f"You'll get a DM when it's almost your turn and when you're up.\n"
+        f"Wait for a number to appear in this panel and claim it."
+    )
+
+
+class LeaveQueueButton(discord.ui.Button):
+    def __init__(self):
+        super().__init__(
+            label="Leave Queue",
+            style=discord.ButtonStyle.danger,
+            emoji=discord.PartialEmoji.from_str(FREEZE_EMOJI),
+            custom_id="snapplus:leave_queue",
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        db = _state["db"]
+        uid = str(interaction.user.id)
+        entry = await db.queue_entries.find_one({"user_id": uid, "status": "pending"})
+        if not entry:
+            # already out; just show join panel
+            await interaction.response.edit_message(view=JoinQueueView(False))
+            return
+        await db.queue_entries.delete_one({"_id": entry["_id"]})
+        await interaction.response.edit_message(view=JoinQueueView(False))
+
+
+class QueuePositionView(discord.ui.LayoutView):
+    """Shows the user's position in the queue with a Leave button (V2)."""
+
+    def __init__(self, country: str, ahead: int):
+        super().__init__(timeout=None)
+        container = discord.ui.Container(accent_colour=0x4A9EFF)
+        container.add_item(discord.ui.TextDisplay(_position_body(country, ahead)))
+        container.add_item(discord.ui.Separator())
+        container.add_item(discord.ui.ActionRow(LeaveQueueButton()))
+        self.add_item(container)
 
 
 class JoinQueueView(discord.ui.LayoutView):
@@ -1199,6 +1276,7 @@ async def _run_bot(token: str):
             bot.add_view(PanelView("", {"frozen": True}))
             bot.add_view(JoinQueueView(False))
             bot.add_view(JoinQueueView(True))
+            bot.add_view(QueuePositionView("FR", 0))
             asyncio.create_task(resume_timers())
 
         @bot.event
