@@ -778,6 +778,154 @@ async def _run_timer(record: dict):
     await log_action(f"⌛ Timer expired: <@{record['user_id']}> lost {record.get('role_label','the role')}")
 
 
+async def _expire_subscription(sub: dict):
+    """Handle a subscription hitting 0 burn: DM, remove role, leave queue, delete."""
+    db = _state["db"]
+    uid = sub.get("discord_id")
+
+    # 1) DM the user (V2 embed with warning emoji).
+    try:
+        u = await _state["bot"].fetch_user(int(uid))
+        view = discord.ui.LayoutView(timeout=None)
+        c = discord.ui.Container(accent_colour=0xEF4444)
+        c.add_item(discord.ui.TextDisplay(
+            f"# {WARN_EMOJI} Your access has expired\n"
+            f"Your timer has run out and your access has been removed.\n\n"
+            f"Contact staff if you'd like more time."
+        ))
+        view.add_item(c)
+        dm = await u.create_dm()
+        await dm.send(view=view)
+    except Exception as e:
+        log.warning(f"expire DM failed: {e}")
+
+    # 2) Remove buyer role.
+    try:
+        for g in _state["bot"].guilds:
+            member = g.get_member(int(uid))
+            if member:
+                role = g.get_role(BUYER_ROLE_ID)
+                if role and role in member.roles:
+                    await member.remove_roles(role, reason="Snap+ access expired")
+                break
+    except Exception as e:
+        log.warning(f"expire remove role failed: {e}")
+
+    # 3) Remove from any queue + advance that queue.
+    try:
+        q = await db.queue_entries.find_one({"user_id": uid, "status": "pending"})
+        if q:
+            country = q.get("country")
+            await db.queue_entries.delete_one({"_id": q["_id"]})
+            if country:
+                await advance_queue(country)
+    except Exception as e:
+        log.warning(f"expire leave queue failed: {e}")
+
+    # 4) Delete the panel channel.
+    try:
+        cmid = sub.get("panel_channel_id")
+        if cmid:
+            ch = _state["bot"].get_channel(int(cmid))
+            if ch is None:
+                ch = await _state["bot"].fetch_channel(int(cmid))
+            if ch:
+                await ch.delete(reason="Snap+ access expired")
+    except Exception as e:
+        log.warning(f"expire delete channel failed: {e}")
+
+    # 5) Delete the subscription. (Do this last; channel delete also wipes it via
+    #    on_guild_channel_delete, but we ensure it here too.)
+    try:
+        await db.subscriptions.delete_one({"discord_id": uid})
+    except Exception as e:
+        log.warning(f"expire delete sub failed: {e}")
+
+    await log_action(f"\u23F0 Access expired for <@{uid}>")
+
+
+async def _tick_subscription(sub: dict, elapsed: int):
+    """Apply `elapsed` seconds of countdown to one subscription. Returns True if expired."""
+    db = _state["db"]
+    uid = sub.get("discord_id")
+    frozen = bool(sub.get("frozen"))
+    burn = int(sub.get("burn_seconds", 0))
+    freeze = int(sub.get("freeze_seconds", 0))
+
+    changed = {}
+    became_unfrozen = False
+
+    if frozen:
+        new_freeze = max(0, freeze - elapsed)
+        changed["freeze_seconds"] = new_freeze
+        if new_freeze == 0:
+            # out of freeze -> auto unfreeze, burn resumes next ticks
+            changed["frozen"] = False
+            became_unfrozen = True
+        freeze = new_freeze
+    else:
+        new_burn = max(0, burn - elapsed)
+        changed["burn_seconds"] = new_burn
+        burn = new_burn
+
+    changed["last_tick"] = datetime.now(timezone.utc).isoformat()
+    await db.subscriptions.update_one({"discord_id": uid}, {"$set": changed})
+
+    # merge for downstream use
+    sub.update(changed)
+
+    # expiry check (only on burn)
+    if not sub.get("frozen") and int(sub.get("burn_seconds", 0)) <= 0:
+        await _expire_subscription(sub)
+        return True
+
+    # refresh the panel with new numbers
+    try:
+        pmid = sub.get("panel_message_id")
+        cmid = sub.get("panel_channel_id")
+        if pmid and cmid:
+            ch = _state["bot"].get_channel(int(cmid))
+            if ch:
+                pmsg = await ch.fetch_message(int(pmid))
+                await pmsg.edit(view=PanelView(f"<@{uid}>", sub))
+    except Exception:
+        pass
+
+    return False
+
+
+async def _countdown_loop():
+    """Runs forever; every ~60s applies real elapsed time to all subscriptions."""
+    await asyncio.sleep(10)  # let the bot settle
+    while True:
+        try:
+            db = _state["db"]
+            if db is not None:
+                now = datetime.now(timezone.utc)
+                subs = await db.subscriptions.find({}).to_list(length=None)
+                for sub in subs:
+                    # compute elapsed since last tick
+                    lt = sub.get("last_tick")
+                    elapsed = 60
+                    if lt:
+                        try:
+                            prev = datetime.fromisoformat(lt)
+                            if prev.tzinfo is None:
+                                prev = prev.replace(tzinfo=timezone.utc)
+                            elapsed = int((now - prev).total_seconds())
+                        except Exception:
+                            elapsed = 60
+                    if elapsed < 1:
+                        elapsed = 1
+                    # cap to avoid huge jumps on first run
+                    if elapsed > 3600:
+                        elapsed = 3600
+                    await _tick_subscription(sub, elapsed)
+        except Exception as e:
+            log.warning(f"countdown loop error: {e}")
+        await asyncio.sleep(60)
+
+
 async def resume_timers():
     """Riprende i timer ancora attivi dopo un riavvio del bot."""
     db = _state["db"]
@@ -1541,6 +1689,7 @@ async def _run_bot(token: str):
             bot.add_view(QueuePositionView("FR", 0))
             bot.add_view(TurnArrivedView(""))
             asyncio.create_task(resume_timers())
+            asyncio.create_task(_countdown_loop())
 
         @bot.event
         async def on_error(event, *a, **kw):
