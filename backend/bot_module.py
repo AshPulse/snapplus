@@ -808,8 +808,8 @@ def _join_queue_body(frozen: bool = False) -> str:
         )
     return (
         f"# {SEARCH_EMOJI} Join Queue\n"
-        f"Pick a country queue and wait for your turn. "
-        f"You'll get a DM when it's almost your turn and when you're up.\n\n"
+        f"Pick a country, wait for your turn, and you'll get a DM when a number "
+        f"is ready to claim. You can be in one country queue at a time.\n\n"
         f"Press **Join Queue** below to choose a country."
     )
 
@@ -991,6 +991,85 @@ class JoinQueueButton(discord.ui.Button):
         )
 
 
+async def _dm_queue_almost(user_id: str, country: str):
+    """DM sent when a user becomes #1 (almost their turn)."""
+    try:
+        u = await _state["bot"].fetch_user(int(user_id))
+        name = QUEUE_COUNTRY_NAMES.get(country, country)
+        view = discord.ui.LayoutView(timeout=None)
+        c = discord.ui.Container(accent_colour=0x4A9EFF)
+        c.add_item(discord.ui.TextDisplay(
+            f"# {WORLD_EMOJI} You're almost up \u2014 {name}\n"
+            f"**Position:** `#1`\n\n"
+            f"You're next in line. Keep an eye on your panel \u2014 "
+            f"when it's your turn a number will appear for you to claim."
+        ))
+        view.add_item(c)
+        dm = await u.create_dm()
+        await dm.send(view=view)
+    except Exception as e:
+        log.warning(f"dm_queue_almost failed: {e}")
+
+
+async def _dm_queue_turn(user_id: str, country: str):
+    """DM sent when a user becomes #0 (their turn)."""
+    try:
+        u = await _state["bot"].fetch_user(int(user_id))
+        name = QUEUE_COUNTRY_NAMES.get(country, country)
+        view = discord.ui.LayoutView(timeout=None)
+        c = discord.ui.Container(accent_colour=0x22C55E)
+        c.add_item(discord.ui.TextDisplay(
+            f"# {ALERT_EMOJI} It's your turn! \u2014 {name}\n"
+            f"Go to your panel channel, wait for a number to appear and **claim it**.\n\n"
+            f"If you leave the queue now you'll lose your spot."
+        ))
+        view.add_item(c)
+        dm = await u.create_dm()
+        await dm.send(view=view)
+    except Exception as e:
+        log.warning(f"dm_queue_turn failed: {e}")
+
+
+async def advance_queue(country: str):
+    """Recompute positions for a country queue, refresh panels, send DMs."""
+    db = _state["db"]
+    entries = await db.queue_entries.find(
+        {"country": country, "status": "pending"}
+    ).sort("joined_at", 1).to_list(length=None)
+
+    for idx, entry in enumerate(entries):
+        uid = entry.get("user_id")
+        ahead = idx  # 0 = front
+        prev = entry.get("position")
+
+        # update stored position
+        if prev != ahead:
+            await db.queue_entries.update_one(
+                {"_id": entry["_id"]}, {"$set": {"position": ahead}}
+            )
+
+        # refresh the user's panel position embed
+        sub = await db.subscriptions.find_one({"discord_id": uid})
+        if sub:
+            try:
+                qmid = sub.get("queue_panel_message_id")
+                cmid = sub.get("panel_channel_id")
+                if qmid and cmid:
+                    ch = _state["bot"].get_channel(int(cmid))
+                    if ch:
+                        qmsg = await ch.fetch_message(int(qmid))
+                        await qmsg.edit(view=QueuePositionView(country, ahead))
+            except Exception:
+                pass
+
+        # notify on transition into #1 or #0
+        if prev != ahead:
+            if ahead == 0:
+                await _dm_queue_turn(uid, country)
+            elif ahead == 1:
+                await _dm_queue_almost(uid, country)
+
+
 async def _queue_position(uid: str):
     """Return (country, ahead) where ahead = people in front (0 = your turn). None if not queued."""
     db = _state["db"]
@@ -1009,17 +1088,20 @@ async def _queue_position(uid: str):
 def _position_body(country: str, ahead: int) -> str:
     name = QUEUE_COUNTRY_NAMES.get(country, country)
     if ahead <= 0:
-        headline = f"# {WORLD_EMOJI} You're up!"
-        pos = "**Your position:** `#0` \u2014 it's your turn"
+        headline = f"# {WORLD_EMOJI} You're up! \u2014 {name}"
+        pos = "**Your position:** `#0` \u2014 it's your turn now"
+        tail = (
+            "A number will appear in this panel \u2014 claim it.\n"
+            "Leaving the queue now means losing your spot."
+        )
     else:
         headline = f"# {WORLD_EMOJI} In queue \u2014 {name}"
-        pos = f"**Your position:** `#{ahead}`"
-    return (
-        f"{headline}\n"
-        f"{pos}\n\n"
-        f"You'll get a DM when it's almost your turn and when you're up.\n"
-        f"Wait for a number to appear in this panel and claim it."
-    )
+        pos = f"**Your position:** `#{ahead}` (people ahead of you)"
+        tail = (
+            "You'll get a DM when you're next, and again when a number is ready to claim.\n"
+            "Press **Leave Queue** to exit \u2014 you can rejoin later from the panel."
+        )
+    return f"{headline}\n{pos}\n\n{tail}"
 
 
 class LeaveQueueButton(discord.ui.Button):
@@ -1039,8 +1121,11 @@ class LeaveQueueButton(discord.ui.Button):
             # already out; just show join panel
             await interaction.response.edit_message(view=JoinQueueView(False))
             return
+        country = entry.get("country")
         await db.queue_entries.delete_one({"_id": entry["_id"]})
         await interaction.response.edit_message(view=JoinQueueView(False))
+        if country:
+            await advance_queue(country)
 
 
 class QueuePositionView(discord.ui.LayoutView):
