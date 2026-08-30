@@ -1,0 +1,9 @@
+node_modules/
+*.bak
+*.bak2
+*.bak3
+__pycache__/
+*.pyc
+.env
+frontend/.env
+backend/.env
