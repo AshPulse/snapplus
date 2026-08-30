@@ -923,15 +923,25 @@ class CountrySelect(discord.ui.Select):
         )
 
 
-class CountrySelectView(discord.ui.View):
-    """Ephemeral country picker shown when pressing Join Queue."""
+class CountrySelectView(discord.ui.LayoutView):
+    """Ephemeral country picker (Components V2): blue container + dropdown inside."""
 
     def __init__(self, states: list, frozen: bool = False):
         super().__init__(timeout=120)
+        body = (
+            f"# {WORLD_EMOJI} Join a Country queue\n"
+            f"Select your country below. You can be in one queue at a time."
+        )
+        if frozen:
+            body += "\n\nYour time is **frozen** \u2014 unfreeze to join."
         sel = CountrySelect(states)
         if frozen:
             sel.disabled = True
-        self.add_item(sel)
+        container = discord.ui.Container(accent_colour=0x4A9EFF)
+        container.add_item(discord.ui.TextDisplay(body))
+        container.add_item(discord.ui.Separator())
+        container.add_item(discord.ui.ActionRow(sel))
+        self.add_item(container)
 
 
 class JoinQueueButton(discord.ui.Button):
@@ -962,9 +972,7 @@ class JoinQueueButton(discord.ui.Button):
             )
             return
         states = await _country_states()
-        lines = [f"# {WORLD_EMOJI} Join a Country queue", "Select your country below. You can be in one queue at a time."]
         await interaction.response.send_message(
-            content="\n".join(lines),
             view=CountrySelectView(states, bool(sub.get("frozen"))),
             ephemeral=True,
         )
