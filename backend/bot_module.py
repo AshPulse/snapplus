@@ -748,6 +748,8 @@ async def _resolve_timer_target(cfg, guild, channel, role_arg):
 
 
 FREEZE_EMOJI = "<:ban:1542637913630838825>"
+SEARCH_EMOJI = "<:search:1542638128463089826>"
+WORLD_EMOJI = "<:world:1542638077133193296>"
 ALERT_EMOJI = "<a:Alert:1537938372822040716>"
 FLASH_EMOJI = "<a:Flash:1542636354192805888>"
 SHOP_EMOJI = "<a:shopping:1537938659716894731>"
@@ -796,6 +798,66 @@ def _panel_body(member_mention: str, sub: dict) -> str:
         f"**Freeze Available**\u2003`{_fmt_secs(sub.get('freeze_seconds', 0))}`\n"
         f"**Status**\u2003{status}"
     )
+
+
+def _join_queue_body(frozen: bool = False) -> str:
+    if frozen:
+        return (
+            f"# {SEARCH_EMOJI} Join Queue\n"
+            f"Your time is currently **frozen**. Unfreeze it to join a country queue."
+        )
+    return (
+        f"# {SEARCH_EMOJI} Join Queue\n"
+        f"Pick a country queue and wait for your turn. "
+        f"You'll get a DM when it's almost your turn and when you're up.\n\n"
+        f"Press **Join Queue** below to choose a country."
+    )
+
+
+class JoinQueueButton(discord.ui.Button):
+    def __init__(self, frozen: bool = False):
+        super().__init__(
+            label="Join Queue",
+            style=discord.ButtonStyle.secondary if frozen else discord.ButtonStyle.primary,
+            emoji=discord.PartialEmoji.from_str(SEARCH_EMOJI),
+            custom_id="snapplus:join_queue",
+            disabled=frozen,
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        db = _state["db"]
+        if db is None:
+            await interaction.response.send_message("Database not available.", ephemeral=True)
+            return
+        uid = str(interaction.user.id)
+        sub = await db.subscriptions.find_one({"discord_id": uid})
+        if not sub:
+            await interaction.response.send_message(
+                "No active subscription found for your account.", ephemeral=True
+            )
+            return
+        if bool(sub.get("frozen")):
+            await interaction.response.send_message(
+                "Your time is frozen. Unfreeze it first to join a queue.", ephemeral=True
+            )
+            return
+        # Placeholder: the country dropdown is the next piece.
+        await interaction.response.send_message(
+            f"{WORLD_EMOJI} Country selection menu coming next.", ephemeral=True
+        )
+
+
+class JoinQueueView(discord.ui.LayoutView):
+    """Join Queue panel (Components V2). Button inside the container."""
+
+    def __init__(self, frozen: bool = False):
+        super().__init__(timeout=None)
+        accent = 0x4A9EFF
+        container = discord.ui.Container(accent_colour=accent)
+        container.add_item(discord.ui.TextDisplay(_join_queue_body(frozen)))
+        container.add_item(discord.ui.Separator())
+        container.add_item(discord.ui.ActionRow(JoinQueueButton(frozen)))
+        self.add_item(container)
 
 
 class FreezeButton(discord.ui.Button):
@@ -916,11 +978,13 @@ async def _run_bot(token: str):
                 panel_msg = await channel.send(
                     view=PanelView(member.mention, sub),
                 )
+                queue_msg = await channel.send(view=JoinQueueView(False))
                 await _state["db"].subscriptions.update_one(
                     {"discord_id": str(member.id)},
                     {"$set": {
                         "panel_channel_id": str(channel.id),
                         "panel_message_id": str(panel_msg.id),
+                        "queue_panel_message_id": str(queue_msg.id),
                     }},
                 )
                 await interaction.response.send_message(f"✅ Access granted to {member.mention}", ephemeral=True)
@@ -1002,6 +1066,8 @@ async def _run_bot(token: str):
                 log.warning(f"slash sync failed: {e}")
             bot.add_view(PanelView("", {"frozen": False}))
             bot.add_view(PanelView("", {"frozen": True}))
+            bot.add_view(JoinQueueView(False))
+            bot.add_view(JoinQueueView(True))
             asyncio.create_task(resume_timers())
 
         @bot.event
