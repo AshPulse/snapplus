@@ -687,41 +687,34 @@ async def refresh_panel(guild, sub: dict, member_mention: str = None):
             return False
         msg = await channel.fetch_message(int(msg_id))
         mention = member_mention or f"<@{sub.get('discord_id')}>"
-        await msg.edit(
-            embed=build_panel_embed(mention, sub),
-            view=FreezeView(bool(sub.get("frozen"))),
-        )
+        await msg.edit(view=PanelView(mention, sub))
         return True
     except Exception:
         return False
 
 
-def build_panel_embed(member_mention: str, sub: dict) -> discord.Embed:
+def _panel_body(member_mention: str, sub: dict) -> str:
     frozen = bool(sub.get("frozen"))
-    embed = discord.Embed(
-        title="Access Panel",
-        description=f"{member_mention}",
-        color=discord.Color.red() if frozen else discord.Color.blue(),
+    status = "\U0001F534 `FROZEN`" if frozen else "\U0001F7E2 `ACTIVE`"
+    return (
+        f"# \u26A1 Access Panel\n"
+        f"{member_mention}\n\n"
+        f"**Time Left**\u2003`{_fmt_secs(sub.get('burn_seconds', 0))}`\n"
+        f"**Freeze Available**\u2003`{_fmt_secs(sub.get('freeze_seconds', 0))}`\n"
+        f"**Status**\u2003{status}"
     )
-    embed.add_field(name="Time Left", value=f"`{_fmt_secs(sub.get('burn_seconds', 0))}`", inline=True)
-    embed.add_field(name="Freeze Available", value=f"`{_fmt_secs(sub.get('freeze_seconds', 0))}`", inline=True)
-    embed.add_field(name="Status", value="`FROZEN`" if frozen else "`ACTIVE`", inline=True)
-    return embed
 
 
-class FreezeView(discord.ui.View):
+class FreezeButton(discord.ui.Button):
     def __init__(self, frozen: bool = False):
-        super().__init__(timeout=None)
-        btn = discord.ui.Button(
+        super().__init__(
             label="Unfreeze Time" if frozen else "Freeze Time",
             style=discord.ButtonStyle.danger if frozen else discord.ButtonStyle.primary,
             emoji=discord.PartialEmoji.from_str(FREEZE_EMOJI),
             custom_id="snapplus:freeze",
         )
-        btn.callback = self._toggle
-        self.add_item(btn)
 
-    async def _toggle(self, interaction: discord.Interaction):
+    async def callback(self, interaction: discord.Interaction):
         db = _state["db"]
         if db is None:
             await interaction.response.send_message("Database not available.", ephemeral=True)
@@ -736,7 +729,6 @@ class FreezeView(discord.ui.View):
             return
 
         frozen = bool(sub.get("frozen"))
-
         if not frozen and int(sub.get("freeze_seconds", 0)) <= 0:
             await interaction.response.send_message(
                 "You have no freeze time left.", ephemeral=True
@@ -751,9 +743,23 @@ class FreezeView(discord.ui.View):
         sub["frozen"] = new_frozen
 
         await interaction.response.edit_message(
-            embed=build_panel_embed(interaction.user.mention, sub),
-            view=FreezeView(new_frozen),
+            view=PanelView(interaction.user.mention, sub)
         )
+
+
+class PanelView(discord.ui.LayoutView):
+    """Access panel rendered with Components V2 (colored bar + button inside)."""
+
+    def __init__(self, member_mention: str, sub: dict):
+        super().__init__(timeout=None)
+        frozen = bool(sub.get("frozen"))
+        accent = 0xE23B3B if frozen else 0x4A9EFF
+
+        container = discord.ui.Container(accent_colour=accent)
+        container.add_item(discord.ui.TextDisplay(_panel_body(member_mention, sub)))
+        container.add_item(discord.ui.Separator())
+        container.add_item(discord.ui.ActionRow(FreezeButton(frozen)))
+        self.add_item(container)
 
 
 async def _run_bot(token: str):
@@ -803,8 +809,7 @@ async def _run_bot(token: str):
                 )
 
                 panel_msg = await channel.send(
-                    embed=build_panel_embed(member.mention, sub),
-                    view=FreezeView(False),
+                    view=PanelView(member.mention, sub),
                 )
                 await _state["db"].subscriptions.update_one(
                     {"discord_id": str(member.id)},
@@ -874,8 +879,8 @@ async def _run_bot(token: str):
                 await bot.tree.sync()
             except Exception as e:
                 log.warning(f"slash sync failed: {e}")
-            bot.add_view(FreezeView())
-            bot.add_view(FreezeView(True))
+            bot.add_view(PanelView("", {"frozen": False}))
+            bot.add_view(PanelView("", {"frozen": True}))
             asyncio.create_task(resume_timers())
 
         @bot.event
