@@ -65,3 +65,9 @@ export const getQueuePosition = (userId) =>
     client.get(`/queue/position/${userId}`).then(r => r.data);
 export const getQueueStats = (country) => 
     client.get(`/queue/stats/${country}`).then(r => r.data);
+
+// Countries
+export const adminGetCountries = (t) => client.get("/countries", auth(t)).then(r => r.data);
+export const adminUpdateCountry = (t, code, patch) => client.put("/admin/countries", { code, ...patch }, auth(t)).then(r => r.data);
+
+// Countries

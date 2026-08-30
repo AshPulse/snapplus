@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import {
     RefreshCw, Trash2, LogOut, ExternalLink, Copy, BarChart3, Users, Ticket,
-    Shield, X, Search, AlertOctagon, KeyRound, ArrowRight, Ban, Plus, Bot, Play, Square, Send,
+    Shield, X, Search, AlertOctagon, KeyRound, ArrowRight, Ban, Plus, Bot, Play, Square, Send, Globe,
 } from "lucide-react";
 import {
     adminMe, adminLogout, adminListUsers, adminChangeState, adminDeleteUser,
@@ -14,6 +14,7 @@ import {
     adminBotConfig, adminBotSave, adminBotStatus, adminBotStart, adminBotStop, adminBotTest,
     adminBotBroadcast, adminBotLeaderboardRefresh, adminBotLeaderboard,
     adminGetMaintenance, adminSetMaintenance, adminSetPermissions,
+    adminGetCountries, adminUpdateCountry,
 } from "../lib/api";
 
 const STATES = [
@@ -137,6 +138,7 @@ export default function AdminPanel() {
                         { k: "bot", i: <Bot size={14} />, l: "Bot", roles: ["owner","admin"], perm: "view_bot" },
                         { k: "team", i: <Users size={14} />, l: "Team", roles: ["owner"] },
                         { k: "security", i: <Shield size={14} />, l: "Security", roles: ["owner"] },
+                        { k: "country", i: <Globe size={14} />, l: "Country", roles: ["owner"] },
                     ].filter(t => {
                         if (!me) return false;
                         if (!t.roles.includes(me.role)) return false;
@@ -168,6 +170,7 @@ export default function AdminPanel() {
             {tab === "bot" && (me?.role === "owner" || me?.permissions?.view_bot) && <BotTab token={token} isOwner={me?.role === "owner" || !!me?.permissions?.edit_bot} />}
             {tab === "team" && me?.role === "owner" && <TeamTab token={token} />}
             {tab === "security" && me?.role === "owner" && <SecurityTab token={token} />}
+            {tab === "country" && me?.role === "owner" && <CountryTab token={token} />}
 
             {modalUser && <UserModal token={token} userId={modalUser} onClose={() => setModalUser(null)} onRefresh={refreshUsers} />}
         </div>
@@ -1003,6 +1006,76 @@ function PermRow({ token, admin, onChange }) {
                     </div>
                 </div>
             )}
+        </div>
+    );
+}
+
+
+function CountryFlag({ code }) {
+    if (!code) return <span style={{ fontSize: 20 }}>🌐</span>;
+    return <img alt={code} src={`https://flagcdn.com/w40/${code.toLowerCase()}.png`} style={{ width: 32, height: 22, borderRadius: 3, verticalAlign: "middle" }} />;
+}
+
+function CountryTab({ token }) {
+    const [countries, setCountries] = useState([]);
+    const [busy, setBusy] = useState("");
+
+    const load = useCallback(() => {
+        adminGetCountries(token).then((r) => setCountries(r.countries || [])).catch(() => toast.error("Failed to load countries"));
+    }, [token]);
+    useEffect(() => { load(); }, [load]);
+
+    const toggle = async (code, field, current) => {
+        setBusy(`${code}:${field}`);
+        try {
+            const r = await adminUpdateCountry(token, code, { [field]: !current });
+            setCountries(r.countries || []);
+            toast.success(`${code} ${field} ${!current ? "ON" : "OFF"}`);
+        } catch {
+            toast.error("Failed");
+        } finally {
+            setBusy("");
+        }
+    };
+
+    return (
+        <div style={{ padding: 22 }}>
+            <div className="admin-label" style={{ marginBottom: 4 }}>Country management</div>
+            <p style={{ color: "#8a8a8a", fontSize: 13, marginBottom: 18 }}>
+                Disable a country to remove it from the queue dropdown. Toggle Ads to control whether burn time counts down.
+            </p>
+            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                {countries.map((c) => (
+                    <div key={c.code} className="admin-card" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 14, opacity: c.enabled ? 1 : 0.55 }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+                            <CountryFlag code={c.code} />
+                            <div>
+                                <div style={{ fontWeight: 700, fontSize: 16 }}>{c.name}</div>
+                                <div style={{ color: "#8a8a8a", fontSize: 12 }}>
+                                    In queue: <b style={{ color: "#c0c0c0" }}>{c.in_queue}</b>
+                                </div>
+                            </div>
+                        </div>
+                        <div style={{ display: "flex", gap: 10 }}>
+                            <div style={{ textAlign: "center" }}>
+                                <div style={{ color: "#6a6a6a", fontSize: 10, marginBottom: 4, letterSpacing: 1 }}>ENABLED</div>
+                                <button className="snap-btn-ghost" onClick={() => toggle(c.code, "enabled", c.enabled)} disabled={busy === `${c.code}:enabled`}
+                                    style={{ background: c.enabled ? "rgba(34,197,94,0.15)" : "transparent", borderColor: c.enabled ? "#22c55e" : undefined, color: c.enabled ? "#22c55e" : "#8a8a8a", minWidth: 62 }}>
+                                    {c.enabled ? "ON" : "OFF"}
+                                </button>
+                            </div>
+                            <div style={{ textAlign: "center" }}>
+                                <div style={{ color: "#6a6a6a", fontSize: 10, marginBottom: 4, letterSpacing: 1 }}>ADS</div>
+                                <button className="snap-btn-ghost" onClick={() => toggle(c.code, "ads", c.ads)} disabled={busy === `${c.code}:ads`}
+                                    style={{ background: c.ads ? "rgba(250,204,21,0.15)" : "transparent", borderColor: c.ads ? "#FACC15" : undefined, color: c.ads ? "#FACC15" : "#8a8a8a", minWidth: 62 }}>
+                                    {c.ads ? "ON" : "OFF"}
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                ))}
+                {countries.length === 0 && <div className="admin-card" style={{ color: "#8a8a8a", textAlign: "center" }}>Loading...</div>}
+            </div>
         </div>
     );
 }
