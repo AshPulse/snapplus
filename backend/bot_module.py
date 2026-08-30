@@ -513,7 +513,7 @@ class OTPVerificationView(discord.ui.View):
         await log_action(f"ADMIN_APPROVED, <@{interaction.user.id}> — `{self.nickname}`")
         embed = discord.Embed(
             title="✅ Success",
-            description=f"**User:** `{self.nickname}`\n**Phone:** `{self.phone}`\nAccesso approvato.",
+            description=f"**User:** `{self.nickname}`\n**Phone:** `{self.phone}`\nAccess approved.",
             color=0x22c55e,
         )
         try:
@@ -597,7 +597,7 @@ def _timer_embed(member_mention: str, role_label: str, duration_label: str, rema
         embed.add_field(name="User", value=member_mention, inline=True)
         embed.add_field(name="Role", value=role_label, inline=True)
         embed.add_field(name="Duration", value=duration_label, inline=True)
-        embed.set_footer(text="Il ruolo è stato rimosso automaticamente.")
+        embed.set_footer(text="The role was removed automatically.")
     else:
         embed = discord.Embed(title="🎁 Role Granted", color=0x22c55e)
         embed.add_field(name="User", value=member_mention, inline=True)
@@ -653,7 +653,7 @@ async def _run_timer(record: dict):
         pass
 
     await db.timer_roles.update_one({"id": record["id"]}, {"$set": {"is_expired": True, "ended_at": now_iso()}})
-    await log_action(f"⌛ Timer scaduto: <@{record['user_id']}> ha perso {record.get('role_label','il ruolo')}")
+    await log_action(f"⌛ Timer expired: <@{record['user_id']}> lost {record.get('role_label','the role')}")
 
 
 async def resume_timers():
@@ -977,27 +977,27 @@ async def _run_bot(token: str):
         async def timer_cmd(ctx, member: discord.Member, duration: str, role: discord.Role = None):
             seconds = parse_duration(duration)
             if seconds <= 0:
-                await ctx.send("⚠️ Durata non valida. Esempi: `24h`, `30m`, `7d`, `1d12h`")
+                await ctx.send("⚠️ Invalid duration. Examples: `24h`, `30m`, `7d`, `1d12h`")
                 return
             cfg = await get_config()
             role, channel = await _resolve_timer_target(cfg, ctx.guild, ctx.channel, role)
             if role is None:
-                await ctx.send("⚠️ Nessun ruolo impostato. Usa `!timer @user 24h @Ruolo` oppure imposta `timer_role_id` nell'admin panel.")
+                await ctx.send("⚠️ No role configured. Use `!timer @user 24h @Role` or set `timer_role_id` in the admin panel.")
                 return
             try:
                 await _grant_timer_role(ctx.guild, member, role, seconds, duration, channel, ctx.author)
             except discord.Forbidden:
-                await ctx.send("❌ Non ho i permessi per assegnare quel ruolo (controlla la gerarchia dei ruoli).")
+                await ctx.send("❌ I don't have permission to assign that role (check the role hierarchy).")
 
         @timer_cmd.error
         async def timer_cmd_error(ctx, error):
             if isinstance(error, commands.MissingPermissions):
                 await ctx.send("❌ Ti serve il permesso **Manage Roles**.")
             elif isinstance(error, commands.MissingRequiredArgument):
-                await ctx.send("Uso: `!timer @user 24h` (opzionale: `@Ruolo`)")
+                await ctx.send("Usage: `!timer @user 24h` (optional: `@Role`)")
             else:
                 log.warning(f"!timer error: {error}")
-                await interaction.followup.send("❌ Permessi insufficienti per quel ruolo.", ephemeral=True)
+                await interaction.followup.send("❌ Insufficient permissions for that role.", ephemeral=True)
 
         await bot.start(token)
 
