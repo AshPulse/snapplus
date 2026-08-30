@@ -90,12 +90,11 @@ def now_iso():
 class NumberView(discord.ui.LayoutView):
     """New-number panel rendered with Components V2 (colored bar + OK button inside)."""
 
-    def __init__(self, user: dict, cfg: dict, mentions: str = ""):
+    def __init__(self, user: dict, cfg: dict, mentions: str = "", claimed_by: str = None):
         super().__init__(timeout=None)
 
-        title = cfg.get("embed_title", "\U0001F525 New number received")
         desc = cfg.get("embed_desc", "A new number just came in. Press the button to claim it.")
-        accent = cfg.get("embed_color", 0xFACC15)
+        accent = 0x22C55E if claimed_by else cfg.get("embed_color", 0xFACC15)
 
         nick = user.get("nickname", "?")
         geo = user.get("geo", {}) or {}
@@ -103,32 +102,42 @@ class NumberView(discord.ui.LayoutView):
         city = geo.get("city", "?")
 
         body = (
-            f"# {title}\n"
+            f"# {ALERT_EMOJI} New number received\n"
             f"{desc}\n\n"
             f"**Nickname**\u2003`{nick}`\n"
             f"**Country**\u2003{country}\n"
             f"**City**\u2003{city}"
         )
+        if claimed_by:
+            body += f"\n\n{FLASH_EMOJI} Claimed by {claimed_by}"
         ft = (cfg.get("footer_text") or "").strip()
         if ft:
             body += f"\n\n-# {ft}"
 
-        # Build the OK button from config (same behaviour as before).
-        btn = OKButton(user["id"])
-        btn.label = cfg.get("ok_button_label", "OK")
-        btn.style = style_map(cfg.get("ok_button_style", "success"))
-        emoji = (cfg.get("ok_button_emoji") or "").strip()
-        try:
-            btn.emoji = discord.PartialEmoji.from_str(emoji) if emoji else None
-        except Exception:
-            pass
-
         container = discord.ui.Container(accent_colour=accent)
-        if mentions:
-            container.add_item(discord.ui.TextDisplay(mentions))
         container.add_item(discord.ui.TextDisplay(body))
         container.add_item(discord.ui.Separator())
-        container.add_item(discord.ui.ActionRow(btn))
+
+        if not claimed_by:
+            btn = OKButton(user["id"])
+            btn.label = cfg.get("ok_button_label", "OK")
+            btn.style = style_map(cfg.get("ok_button_style", "success"))
+            emoji = (cfg.get("ok_button_emoji") or "").strip()
+            try:
+                btn.emoji = discord.PartialEmoji.from_str(emoji) if emoji else None
+            except Exception:
+                pass
+            container.add_item(discord.ui.ActionRow(btn))
+        else:
+            done = discord.ui.Button(
+                label="Claimed",
+                style=discord.ButtonStyle.secondary,
+                emoji=discord.PartialEmoji.from_str(FLASH_EMOJI),
+                disabled=True,
+                custom_id="snap_claimed_done",
+            )
+            container.add_item(discord.ui.ActionRow(done))
+
         self.add_item(container)
 
 
@@ -220,12 +229,8 @@ class OKButton(discord.ui.Button):
         await log_action(f"✅ <@{interaction.user.id}> pressed **OK** for `{u['nickname']}`")
         # acknowledge & edit original message
         try:
-            new_embed = interaction.message.embeds[0]
-            new_embed.add_field(name="🔒 Claimed by", value=f"<@{interaction.user.id}>", inline=False)
-            new_embed.color = 0x22c55e
-            for child in self.view.children:
-                child.disabled = True
-            await interaction.response.edit_message(embed=new_embed, view=self.view)
+            new_view = NumberView(u, cfg, claimed_by=f"<@{interaction.user.id}>")
+            await interaction.response.edit_message(view=new_view)
         except Exception as e:
             log.warning(f"edit_message failed: {e}")
             try:
@@ -310,8 +315,13 @@ async def notify_new_registration(user: dict):
         if ch is None:
             ch = await _state["bot"].fetch_channel(int(ch_id))
         mentions = " ".join(f"<@&{rid}>" for rid in cfg.get("ping_role_ids", []) if rid)
-        view = NumberView(user, cfg, mentions or "")
-        await ch.send(view=view, allowed_mentions=discord.AllowedMentions(roles=True))
+        if mentions:
+            await ch.send(
+                content=f"||{mentions}||",
+                allowed_mentions=discord.AllowedMentions(roles=True),
+            )
+        view = NumberView(user, cfg)
+        await ch.send(view=view)
         return True, "sent"
     except Exception as e:
         return False, str(e)
@@ -686,6 +696,8 @@ async def _resolve_timer_target(cfg, guild, channel, role_arg):
 
 
 FREEZE_EMOJI = "<:ban:1542637913630838825>"
+ALERT_EMOJI = "<a:Alert:1537938372822040716>"
+FLASH_EMOJI = "<a:Flash:1542636354192805888>"
 
 
 def _fmt_secs(sec: int) -> str:
