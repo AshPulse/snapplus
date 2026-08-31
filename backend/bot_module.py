@@ -1584,10 +1584,151 @@ class TicketCategorySelect(discord.ui.Select):
 
     async def callback(self, interaction: discord.Interaction):
         choice = self.values[0]
-        # Placeholder: next pieces open the actual tickets.
+        if choice == "support":
+            channel = await _open_ticket(interaction, TICKET_SUPPORT_CATEGORY_ID, "support")
+            if channel is None:
+                return
+            await channel.send(view=SupportTicketView())
+            await interaction.followup.send(
+                f"\u2705 Ticket opened: {channel.mention}", ephemeral=True
+            )
+        elif choice == "purchase":
+            await interaction.response.send_message(
+                view=PlanSelectView(), ephemeral=True
+            )
+
+
+async def _find_user_ticket(guild, user_id: int):
+    """Return an existing ticket channel owned by the user, or None."""
+    cat_ids = {TICKET_SUPPORT_CATEGORY_ID, TICKET_PURCHASE_CATEGORY_ID}
+    for ch in guild.text_channels:
+        if ch.category_id in cat_ids:
+            topic = ch.topic or ""
+            if f"owner:{user_id}" in topic:
+                return ch
+    return None
+
+
+async def _open_ticket(interaction, category_id: int, kind: str):
+    """Create a private ticket channel. Returns the channel or None (with a reply)."""
+    guild = interaction.guild
+    user = interaction.user
+
+    existing = await _find_user_ticket(guild, user.id)
+    if existing:
         await interaction.response.send_message(
-            f"Ticket flow for **{choice}** coming next.", ephemeral=True
+            f"You already have an open ticket: {existing.mention}", ephemeral=True
         )
+        return None
+
+    category = guild.get_channel(category_id)
+    if category is None:
+        await interaction.response.send_message("\u274C Ticket category not found.", ephemeral=True)
+        return None
+
+    staff_role = guild.get_role(STAFF_ROLE_ID)
+    overwrites = {
+        guild.default_role: discord.PermissionOverwrite(view_channel=False),
+        user: discord.PermissionOverwrite(view_channel=True, send_messages=True),
+        guild.me: discord.PermissionOverwrite(view_channel=True, send_messages=True),
+    }
+    if staff_role is not None:
+        overwrites[staff_role] = discord.PermissionOverwrite(view_channel=True, send_messages=True)
+
+    try:
+        channel = await guild.create_text_channel(
+            f"{kind}-{user.name}",
+            category=category,
+            overwrites=overwrites,
+            topic=f"owner:{user.id}",
+        )
+    except Exception as e:
+        await interaction.response.send_message(f"\u274C Failed to open ticket: {e}", ephemeral=True)
+        return None
+
+    # initial ping message: staff role + member
+    ping = f"<@&{STAFF_ROLE_ID}> {user.mention}"
+    try:
+        await channel.send(
+            content=ping,
+            allowed_mentions=discord.AllowedMentions(roles=True, users=True),
+        )
+    except Exception:
+        pass
+
+    return channel
+
+
+class CloseTicketButton(discord.ui.Button):
+    def __init__(self):
+        super().__init__(
+            label="Close",
+            style=discord.ButtonStyle.danger,
+            emoji=discord.PartialEmoji.from_str(FREEZE_EMOJI),
+            custom_id="snapplus:close_ticket",
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        await interaction.response.send_message("Closing in 5 seconds...")
+        await asyncio.sleep(5)
+        try:
+            await interaction.channel.delete(reason="Ticket closed")
+        except Exception as e:
+            log.warning(f"close ticket failed: {e}")
+
+
+class SupportTicketView(discord.ui.LayoutView):
+    """Welcome message inside a support ticket (V2, blue) with Close inside."""
+
+    def __init__(self):
+        super().__init__(timeout=None)
+        body = (
+            f"# {TICKET_EMOJI} Support Ticket\n"
+            f"Thanks for opening a ticket. Describe your issue and our staff will "
+            f"help you shortly.\n\n"
+            f"Press **Close** when you're done."
+        )
+        container = discord.ui.Container(accent_colour=0x4A9EFF)
+        container.add_item(discord.ui.TextDisplay(body))
+        container.add_item(discord.ui.Separator())
+        container.add_item(discord.ui.ActionRow(CloseTicketButton()))
+        self.add_item(container)
+
+
+class PlanSelect(discord.ui.Select):
+    def __init__(self):
+        options = []
+        for p in TICKET_PLANS:
+            options.append(discord.SelectOption(
+                label=f"{p['label']}  |  ${p['usd']}",
+                value=p["key"],
+                emoji=discord.PartialEmoji.from_str(MONEY_EMOJI2),
+            ))
+        super().__init__(
+            placeholder="Select an access plan to continue",
+            min_values=1, max_values=1, options=options,
+            custom_id="snapplus:plan_select",
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        plan_key = self.values[0]
+        # Placeholder: piece 3 opens the purchase ticket with the invoice.
+        await interaction.response.send_message(
+            f"Purchase ticket for plan **{plan_key}** coming next.", ephemeral=True
+        )
+
+
+class PlanSelectView(discord.ui.LayoutView):
+    """Ephemeral plan picker (V2, blue) shown after choosing Purchase."""
+
+    def __init__(self):
+        super().__init__(timeout=180)
+        body = f"# {MONEY_EMOJI2} Select an access plan\nChoose a plan below to continue to payment."
+        container = discord.ui.Container(accent_colour=0x4A9EFF)
+        container.add_item(discord.ui.TextDisplay(body))
+        container.add_item(discord.ui.Separator())
+        container.add_item(discord.ui.ActionRow(PlanSelect()))
+        self.add_item(container)
 
 
 class TicketPanelView(discord.ui.LayoutView):
@@ -1765,6 +1906,7 @@ async def _run_bot(token: str):
             bot.add_view(QueuePositionView("FR", 0))
             bot.add_view(TurnArrivedView(""))
             bot.add_view(TicketPanelView())
+            bot.add_view(SupportTicketView())
             asyncio.create_task(resume_timers())
             asyncio.create_task(_countdown_loop())
 
