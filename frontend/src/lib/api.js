@@ -71,3 +71,7 @@ export const adminGetCountries = (t) => client.get("/countries", auth(t)).then(r
 export const adminUpdateCountry = (t, code, patch) => client.put("/admin/countries", { code, ...patch }, auth(t)).then(r => r.data);
 
 // Countries
+
+// Queue admin
+export const adminGetQueues = (t) => client.get("/admin/queues", auth(t)).then(r => r.data);
+export const adminRemoveFromQueue = (t, userId, country) => client.post("/admin/queue/remove", { user_id: userId, country }, auth(t)).then(r => r.data);

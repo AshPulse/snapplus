@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import {
     RefreshCw, Trash2, LogOut, ExternalLink, Copy, BarChart3, Users, Ticket,
-    Shield, X, Search, AlertOctagon, KeyRound, ArrowRight, Ban, Plus, Bot, Play, Square, Send, Globe,
+    Shield, X, Search, AlertOctagon, KeyRound, ArrowRight, Ban, Plus, Bot, Play, Square, Send, Globe, ListOrdered,
 } from "lucide-react";
 import {
     adminMe, adminLogout, adminListUsers, adminChangeState, adminDeleteUser,
@@ -15,6 +15,7 @@ import {
     adminBotBroadcast, adminBotLeaderboardRefresh, adminBotLeaderboard,
     adminGetMaintenance, adminSetMaintenance, adminSetPermissions,
     adminGetCountries, adminUpdateCountry,
+    adminGetQueues, adminRemoveFromQueue,
 } from "../lib/api";
 
 const STATES = [
@@ -139,6 +140,7 @@ export default function AdminPanel() {
                         { k: "team", i: <Users size={14} />, l: "Team", roles: ["owner"] },
                         { k: "security", i: <Shield size={14} />, l: "Security", roles: ["owner"] },
                         { k: "country", i: <Globe size={14} />, l: "Country", roles: ["owner"] },
+                        { k: "queue", i: <ListOrdered size={14} />, l: "Queue", roles: ["owner"] },
                     ].filter(t => {
                         if (!me) return false;
                         if (!t.roles.includes(me.role)) return false;
@@ -171,6 +173,7 @@ export default function AdminPanel() {
             {tab === "team" && me?.role === "owner" && <TeamTab token={token} />}
             {tab === "security" && me?.role === "owner" && <SecurityTab token={token} />}
             {tab === "country" && me?.role === "owner" && <CountryTab token={token} />}
+            {tab === "queue" && me?.role === "owner" && <QueueTab token={token} />}
 
             {modalUser && <UserModal token={token} userId={modalUser} onClose={() => setModalUser(null)} onRefresh={refreshUsers} />}
         </div>
@@ -1075,6 +1078,80 @@ function CountryTab({ token }) {
                     </div>
                 ))}
                 {countries.length === 0 && <div className="admin-card" style={{ color: "#8a8a8a", textAlign: "center" }}>Loading...</div>}
+            </div>
+        </div>
+    );
+}
+
+
+function _fmtQueueDuration(secs) {
+    if (secs < 60) return `${secs}s`;
+    const m = Math.floor(secs / 60);
+    if (m < 60) return `${m}m`;
+    const h = Math.floor(m / 60);
+    return `${h}h ${m % 60}m`;
+}
+
+function QueueTab({ token }) {
+    const [queues, setQueues] = useState([]);
+    const [busy, setBusy] = useState("");
+
+    const load = useCallback(() => {
+        adminGetQueues(token).then((r) => setQueues(r.queues || [])).catch(() => toast.error("Failed to load queues"));
+    }, [token]);
+    useEffect(() => {
+        load();
+        const iv = setInterval(load, 10000);
+        return () => clearInterval(iv);
+    }, [load]);
+
+    const remove = async (userId, country) => {
+        setBusy(`${country}:${userId}`);
+        try {
+            await adminRemoveFromQueue(token, userId, country);
+            toast.success("Removed from queue");
+            load();
+        } catch {
+            toast.error("Failed");
+        } finally {
+            setBusy("");
+        }
+    };
+
+    return (
+        <div style={{ padding: 22 }}>
+            <div className="admin-label" style={{ marginBottom: 4 }}>Queue management</div>
+            <p style={{ color: "#8a8a8a", fontSize: 13, marginBottom: 18 }}>
+                Live view of all country queues. Remove a member to take them out \u2014 they'll get a DM.
+            </p>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 16 }}>
+                {queues.map((q) => (
+                    <div key={q.code} className="admin-card">
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+                            <div style={{ fontWeight: 700, fontSize: 16 }}>{q.name}</div>
+                            <div style={{ color: "#8a8a8a", fontSize: 12 }}>{q.count} in queue</div>
+                        </div>
+                        {q.members.length === 0 && (
+                            <div style={{ color: "#6a6a6a", fontSize: 13, textAlign: "center", padding: 12 }}>Empty</div>
+                        )}
+                        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                            {q.members.map((m) => (
+                                <div key={m.user_id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: 10, background: "#0d0d0d", borderRadius: 8, border: "1px solid #1a1a1a" }}>
+                                    <div>
+                                        <div style={{ fontWeight: 600, fontSize: 13 }}>
+                                            <span style={{ color: m.position === 0 ? "#22c55e" : "#FACC15" }}>#{m.position}</span> {m.username}
+                                        </div>
+                                        <div style={{ color: "#8a8a8a", fontSize: 11 }}>in queue for {_fmtQueueDuration(m.seconds_in_queue)}</div>
+                                    </div>
+                                    <button className="snap-btn-ghost" onClick={() => remove(m.user_id, q.code)} disabled={busy === `${q.code}:${m.user_id}`}
+                                        style={{ color: "#ef4444", borderColor: "#ef4444", fontSize: 12, padding: "6px 10px" }}>
+                                        Remove
+                                    </button>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                ))}
             </div>
         </div>
     );
