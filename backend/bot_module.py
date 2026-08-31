@@ -1603,17 +1603,19 @@ def _ticket_panel_body() -> str:
 
 
 def _ticket_info_body() -> str:
+    m = "<a:033:1543901374897725494>"
     return (
-        f"\U0001F4B3 **Pricing** \u2014 24h Access: 15\u20AC \u00B7 Lifetime: 500\u20AC "
-        f"(24 Hours Limited Offer)\n\n"
-        f"\u23F1\uFE0F **How access time works** \u2014 Your subscription is a burn balance.\n\n"
-        f"**Freeze Time** \u2014 Buying N hours grants N burn + N freeze (1:1). In the panel "
-        f"you can press Stop Time to freeze your timer.\n"
+        f"<a:032:1544044144060665916> **Pricing** \u2014 "
+        f"12h: $5 {m} \u00B7 24h: $10 {m} \u00B7 48h: $20 {m} \u00B7 Lifetime: $450 {m}\n\n"
+        f"<a:088:1544044277481480273> **How access time works** \u2014 "
+        f"Your subscription is a burn balance.\n\n"
+        f"<a:074:1544043832084267098> **Freeze Time** \u2014 Buying N hours grants N burn + "
+        f"N freeze (1:1). In the panel you can press Stop Time to freeze your timer.\n"
         f"\u2022 Freeze Time only works while Ads can run \u2014 outside the schedule it does not apply.\n"
         f"\u2022 While frozen, queue join access is blocked until you resume.\n"
         f"\u2022 Example: 24h access = 24h Freeze Time.\n"
         f"\u2022 Neither balance resets until your subscription ends, or you renew / buy more hours.\n\n"
-        f"**Note** \u2014 Only crypto payments via Litecoin are accepted for purchases."
+        f"<a:031:1543903212145483838> **Note** \u2014 Only crypto payments via Litecoin are accepted for purchases."
     )
 
 
