@@ -986,6 +986,24 @@ async def _resolve_timer_target(cfg, guild, channel, role_arg):
 
 FREEZE_EMOJI = "<:ban:1542637913630838825>"
 
+# ----- Ticket system -----
+TICKET_PANEL_CHANNEL_ID = 1537932706506215434
+TICKET_SUPPORT_CATEGORY_ID = 1543648690231705790
+TICKET_PURCHASE_CATEGORY_ID = 1543864452447866991
+TICKET_EMOJI = "<:ticket:1542791337785425991>"
+MONEY_EMOJI2 = "<:money:1542638222029361212>"
+GUIDE_EMOJI = "<:guide:1542638280858669156>"
+SHOP_EMOJI2 = "<a:shopping:1537938659716894731>"
+WARN_EMOJI2 = "<a:warnings:1537938330946240612>"
+LTC_ADDRESS = "LZnytAtTzjGqUeLWHpkvhkK2U8z5f5fov5"
+
+TICKET_PLANS = [
+    {"key": "12h", "label": "12h", "usd": 5},
+    {"key": "24h", "label": "24h", "usd": 10},
+    {"key": "48h", "label": "48h", "usd": 20},
+    {"key": "life", "label": "Lifetime", "usd": 450},
+]
+
 STAFF_ROLE_ID = 1534898093995327568   # only this role can use /timer and /add
 BUYER_ROLE_ID = 1538144743505268748   # auto-assigned to the target of /timer and /add
 
@@ -1528,6 +1546,64 @@ class PanelView(discord.ui.LayoutView):
         self.add_item(container)
 
 
+def _ticket_panel_body() -> str:
+    return (
+        f"# {TICKET_EMOJI} Purchase Tickets\n"
+        f"Create a ticket to purchase access to all features of the server."
+    )
+
+
+def _ticket_info_body() -> str:
+    return (
+        f"\U0001F4B3 **Pricing** \u2014 24h Access: 15\u20AC \u00B7 Lifetime: 500\u20AC "
+        f"(24 Hours Limited Offer)\n\n"
+        f"\u23F1\uFE0F **How access time works** \u2014 Your subscription is a burn balance.\n\n"
+        f"**Freeze Time** \u2014 Buying N hours grants N burn + N freeze (1:1). In the panel "
+        f"you can press Stop Time to freeze your timer.\n"
+        f"\u2022 Freeze Time only works while Ads can run \u2014 outside the schedule it does not apply.\n"
+        f"\u2022 While frozen, queue join access is blocked until you resume.\n"
+        f"\u2022 Example: 24h access = 24h Freeze Time.\n"
+        f"\u2022 Neither balance resets until your subscription ends, or you renew / buy more hours.\n\n"
+        f"**Note** \u2014 Only crypto payments via Litecoin are accepted for purchases."
+    )
+
+
+class TicketCategorySelect(discord.ui.Select):
+    def __init__(self):
+        options = [
+            discord.SelectOption(label="Purchase", value="purchase",
+                                 emoji=discord.PartialEmoji.from_str(MONEY_EMOJI2)),
+            discord.SelectOption(label="Support", value="support",
+                                 emoji=discord.PartialEmoji.from_str(GUIDE_EMOJI)),
+        ]
+        super().__init__(
+            placeholder="Select a ticket category to open",
+            min_values=1, max_values=1, options=options,
+            custom_id="snapplus:ticket_category",
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        choice = self.values[0]
+        # Placeholder: next pieces open the actual tickets.
+        await interaction.response.send_message(
+            f"Ticket flow for **{choice}** coming next.", ephemeral=True
+        )
+
+
+class TicketPanelView(discord.ui.LayoutView):
+    """Ticket panel (Components V2, blue) with the category dropdown inside."""
+
+    def __init__(self):
+        super().__init__(timeout=None)
+        container = discord.ui.Container(accent_colour=0x4A9EFF)
+        container.add_item(discord.ui.TextDisplay(_ticket_panel_body()))
+        container.add_item(discord.ui.Separator())
+        container.add_item(discord.ui.TextDisplay(_ticket_info_body()))
+        container.add_item(discord.ui.Separator())
+        container.add_item(discord.ui.ActionRow(TicketCategorySelect()))
+        self.add_item(container)
+
+
 async def _run_bot(token: str):
     intents = discord.Intents.default()
     intents.members = True            # lettura ruoli/membri (privileged: attivalo nel portal)
@@ -1688,6 +1764,7 @@ async def _run_bot(token: str):
             bot.add_view(JoinQueueView(True))
             bot.add_view(QueuePositionView("FR", 0))
             bot.add_view(TurnArrivedView(""))
+            bot.add_view(TicketPanelView())
             asyncio.create_task(resume_timers())
             asyncio.create_task(_countdown_loop())
 
@@ -1696,6 +1773,34 @@ async def _run_bot(token: str):
             log.exception(f"[snap-bot] event error: {event}")
 
         # ---------- !timer @user 24h [@Role] ----------
+        @bot.command(name="ticket")
+        async def ticket_panel_cmd(ctx):
+            """Regenerate the ticket panel in the configured channel (admin only)."""
+            if not ctx.author.guild_permissions.administrator:
+                return
+            ch = ctx.guild.get_channel(TICKET_PANEL_CHANNEL_ID)
+            if ch is None:
+                try:
+                    ch = await ctx.guild.fetch_channel(TICKET_PANEL_CHANNEL_ID)
+                except Exception:
+                    await ctx.send("\u274C Ticket panel channel not found.")
+                    return
+            # delete recent old panel messages from the bot
+            try:
+                async for m in ch.history(limit=20):
+                    if m.author == bot.user:
+                        await m.delete()
+            except Exception:
+                pass
+            try:
+                await ch.send(view=TicketPanelView())
+                try:
+                    await ctx.message.delete()
+                except Exception:
+                    pass
+            except Exception as e:
+                await ctx.send(f"\u274C Failed to post panel: {e}")
+
         @bot.command(name="timer")
         @commands.has_permissions(manage_roles=True)
         async def timer_cmd(ctx, member: discord.Member, duration: str, role: discord.Role = None):
