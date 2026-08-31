@@ -1695,6 +1695,53 @@ class SupportTicketView(discord.ui.LayoutView):
         self.add_item(container)
 
 
+async def _usd_to_ltc(usd: float):
+    """Convert USD to LTC via CoinGecko. Returns float LTC or None on failure."""
+    url = "https://api.coingecko.com/api/v3/simple/price?ids=litecoin&vs_currencies=usd"
+    try:
+        import aiohttp
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                if resp.status != 200:
+                    return None
+                data = await resp.json()
+                rate = float(data["litecoin"]["usd"])
+                if rate <= 0:
+                    return None
+                return round(usd / rate, 6)
+    except Exception as e:
+        log.warning(f"usd_to_ltc failed: {e}")
+        return None
+
+
+def _plan_by_key(key: str):
+    for p in TICKET_PLANS:
+        if p["key"] == key:
+            return p
+    return None
+
+
+class InvoiceView(discord.ui.LayoutView):
+    """Payment invoice inside a purchase ticket (V2, blue) with Close inside."""
+
+    def __init__(self, plan_label: str, usd: int, ltc_str: str):
+        super().__init__(timeout=None)
+        body = (
+            f"# {SHOP_EMOJI2} Payment Invoice\n"
+            f"Send the Litecoin amount to the address below.\n\n"
+            f"{WARN_EMOJI2} **REMEMBER** \u2014 DON'T PAY ANY OF THE STAFF TEAM. "
+            f"PAY ONLY THIS LTC ADDRESS.\n\n"
+            f"**\U0001F4E6 Plan**\n```{plan_label} (${usd} USD)```\n"
+            f"**\U0001FA99 LTC Amount**\n```{ltc_str}```\n"
+            f"**\U0001F3E6 Payment Address**\n```{LTC_ADDRESS}```"
+        )
+        container = discord.ui.Container(accent_colour=0x4A9EFF)
+        container.add_item(discord.ui.TextDisplay(body))
+        container.add_item(discord.ui.Separator())
+        container.add_item(discord.ui.ActionRow(CloseTicketButton()))
+        self.add_item(container)
+
+
 class PlanSelect(discord.ui.Select):
     def __init__(self):
         options = []
@@ -1712,9 +1759,22 @@ class PlanSelect(discord.ui.Select):
 
     async def callback(self, interaction: discord.Interaction):
         plan_key = self.values[0]
-        # Placeholder: piece 3 opens the purchase ticket with the invoice.
-        await interaction.response.send_message(
-            f"Purchase ticket for plan **{plan_key}** coming next.", ephemeral=True
+        plan = _plan_by_key(plan_key)
+        if not plan:
+            await interaction.response.send_message("Invalid plan.", ephemeral=True)
+            return
+
+        channel = await _open_ticket(interaction, TICKET_PURCHASE_CATEGORY_ID, "purchase")
+        if channel is None:
+            return
+
+        # compute LTC amount (fallback if API down)
+        ltc = await _usd_to_ltc(plan["usd"])
+        ltc_str = f"{ltc} LTC" if ltc is not None else "Ask staff (rate unavailable)"
+
+        await channel.send(view=InvoiceView(plan["label"], plan["usd"], ltc_str))
+        await interaction.followup.send(
+            f"\u2705 Purchase ticket opened: {channel.mention}", ephemeral=True
         )
 
 
