@@ -252,6 +252,12 @@ class NumVerifyService:
 
 # ---------- QUEUE SYSTEM ----------
 
+@api_router.api_route("/ping", methods=["GET", "HEAD"])
+async def ping():
+    """Lightweight keep-alive endpoint (accepts GET and HEAD for UptimeRobot)."""
+    return {"ok": True}
+
+
 @api_router.post("/queue/join")
 @limiter.limit("10/minute")
 async def queue_join(data: QueueJoinInput, request: Request):
