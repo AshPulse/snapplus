@@ -1307,6 +1307,55 @@ async def _dm_queue_turn(user_id: str, country: str):
         log.warning(f"dm_queue_turn failed: {e}")
 
 
+async def admin_remove_from_queue(user_id: str, country: str):
+    """Called from FastAPI when an admin removes a user from a queue.
+    Sends a DM notice + advances the queue + refreshes the user's panel."""
+    db = _state["db"]
+    if db is None or not _state["bot"]:
+        return
+
+    name = QUEUE_COUNTRY_NAMES.get(country, country)
+
+    # DM the removed user (V2 embed, alert emoji).
+    try:
+        u = await _state["bot"].fetch_user(int(user_id))
+        view = discord.ui.LayoutView(timeout=None)
+        c = discord.ui.Container(accent_colour=0xEF4444)
+        c.add_item(discord.ui.TextDisplay(
+            f"# {ALERT_EMOJI} Removed from Queue\n"
+            f"You have been removed from the **{name}** queue by an admin.\n\n"
+            f"{SEARCH_EMOJI} You can rejoin the queue anytime from your panel."
+        ))
+        view.add_item(c)
+        dm = await u.create_dm()
+        await dm.send(view=view)
+    except Exception as e:
+        log.warning(f"admin_remove DM failed: {e}")
+
+    # Reset the user's queue panel back to Join Queue.
+    try:
+        sub = await db.subscriptions.find_one({"discord_id": user_id})
+        if sub:
+            qmid = sub.get("queue_panel_message_id")
+            cmid = sub.get("panel_channel_id")
+            if qmid and cmid:
+                ch = _state["bot"].get_channel(int(cmid))
+                if ch:
+                    qmsg = await ch.fetch_message(int(qmid))
+                    frozen = bool(sub.get("frozen"))
+                    await qmsg.edit(view=JoinQueueView(frozen))
+    except Exception as e:
+        log.warning(f"admin_remove panel reset failed: {e}")
+
+    # Advance the rest of the queue (updates positions + DMs).
+    try:
+        await advance_queue(country)
+    except Exception as e:
+        log.warning(f"admin_remove advance failed: {e}")
+
+    await log_action(f"\U0001F6AA <@{user_id}> removed from {country} queue by admin")
+
+
 async def advance_queue(country: str):
     """Recompute positions for a country queue, refresh panels, send DMs."""
     db = _state["db"]

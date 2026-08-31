@@ -338,6 +338,11 @@ def require_perm(key: str):
 # ---------- Models ----------
 
 
+class QueueRemoveInput(BaseModel):
+    user_id: str
+    country: str
+
+
 class CountryUpdateInput(BaseModel):
     code: str
     enabled: Optional[bool] = None
@@ -732,6 +737,61 @@ async def update_country(data: CountryUpdateInput, _=Depends(require_perm("count
     if patch:
         await db.countries.update_one({"code": data.code}, {"$set": patch})
     return {"ok": True, "countries": await countries_state()}
+
+
+# ---------- Queue admin ----------
+QUEUE_ADMIN_COUNTRIES = ["FR", "BE", "BG"]
+QUEUE_ADMIN_NAMES = {"FR": "France", "BE": "Belgium", "BG": "Bulgaria"}
+
+
+@api_router.get("/admin/queues")
+async def admin_queues(_=Depends(require_admin)):
+    """List all 3 country queues with their members."""
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc)
+    out = []
+    for code in QUEUE_ADMIN_COUNTRIES:
+        entries = await db.queue_entries.find(
+            {"country": code, "status": "pending"}
+        ).sort("joined_at", 1).to_list(length=None)
+        members = []
+        for idx, e in enumerate(entries):
+            secs = 0
+            ja = e.get("joined_at")
+            if ja:
+                try:
+                    prev = datetime.fromisoformat(ja)
+                    if prev.tzinfo is None:
+                        prev = prev.replace(tzinfo=timezone.utc)
+                    secs = int((now - prev).total_seconds())
+                except Exception:
+                    secs = 0
+            members.append({
+                "user_id": e.get("user_id"),
+                "username": e.get("username", "?"),
+                "position": idx,
+                "seconds_in_queue": secs,
+            })
+        out.append({
+            "code": code,
+            "name": QUEUE_ADMIN_NAMES.get(code, code),
+            "count": len(members),
+            "members": members,
+        })
+    return {"queues": out}
+
+
+@api_router.post("/admin/queue/remove")
+async def admin_queue_remove(data: QueueRemoveInput, _=Depends(require_perm("countries"))):
+    if data.country not in QUEUE_ADMIN_COUNTRIES:
+        raise HTTPException(400, "Invalid country")
+    result = await db.queue_entries.delete_one({
+        "user_id": data.user_id, "country": data.country, "status": "pending",
+    })
+    removed = result.deleted_count > 0
+    if removed:
+        asyncio.create_task(snapbot.admin_remove_from_queue(data.user_id, data.country))
+    return {"ok": removed}
 
 
 @api_router.get("/admin/users")
