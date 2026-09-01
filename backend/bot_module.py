@@ -2054,6 +2054,26 @@ async def _run_bot(token: str):
             except Exception as e:
                 await ctx.send(f"\u274C Failed to post panel: {e}")
 
+        @bot.command(name="role")
+        async def role_cmd(ctx, member: discord.Member = None, role: discord.Role = None):
+            """Toggle a role on a member (admin only). Usage: !role @user @role"""
+            if not ctx.author.guild_permissions.administrator:
+                return
+            if member is None or role is None:
+                await ctx.send("Usage: `!role @user @role`")
+                return
+            try:
+                if role in member.roles:
+                    await member.remove_roles(role, reason=f"!role by {ctx.author}")
+                    await ctx.send(f"\u2705 Removed {role.mention} from {member.mention}")
+                else:
+                    await member.add_roles(role, reason=f"!role by {ctx.author}")
+                    await ctx.send(f"\u2705 Added {role.mention} to {member.mention}")
+            except discord.Forbidden:
+                await ctx.send("\u274C I can't manage that role (check my role is above it and I have Manage Roles).")
+            except Exception as e:
+                await ctx.send(f"\u274C Error: {e}")
+
         @bot.command(name="timer")
         @commands.has_permissions(manage_roles=True)
         async def timer_cmd(ctx, member: discord.Member, duration: str, role: discord.Role = None):
