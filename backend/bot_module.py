@@ -1888,7 +1888,7 @@ async def _run_bot(token: str):
                     ephemeral=True,
                 )
                 return
-            category_id = 1542631796578066624  # Your Panel
+            category_id = 1558233146141581312 # Your Panel
             category = guild.get_channel(category_id)
             
             if not category:
