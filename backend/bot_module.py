@@ -1004,7 +1004,7 @@ TICKET_PLANS = [
     {"key": "life", "label": "Lifetime", "usd": 450},
 ]
 
-STAFF_ROLE_ID = 1534898093995327568   # only this role can use /timer and /add
+STAFF_ROLE_ID = 1558233114269061200   # only this role can use /timer and /add
 BUYER_ROLE_ID = 1538144743505268748   # auto-assigned to the target of /timer and /add
 
 
